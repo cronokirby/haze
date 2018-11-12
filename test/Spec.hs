@@ -1,6 +1,5 @@
 import Relude
 
-import Data.ByteString (ByteString)
 import qualified Data.HashMap.Strict as HM
 import Test.Hspec
 
@@ -8,11 +7,11 @@ import Haze.Bencoding
 
 
 main :: IO ()
-main = hspec $
-    bencodingSpec
+main = hspec bencodingSpec
 
 
-bencodingSpec = do
+bencodingSpec :: SpecWith ()
+bencodingSpec =
     describe "Bencoding.encode" $ do
         it "can encode the primitive types" $ do
             doEncode (BString "foo") `shouldBe`

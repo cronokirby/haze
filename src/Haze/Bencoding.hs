@@ -19,7 +19,6 @@ where
 
 import Relude
 
-import qualified Data.ByteString.Char8 as BS
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Text as T
 import Data.Int (Int64)
