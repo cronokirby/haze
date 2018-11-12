@@ -1,0 +1,41 @@
+name:                haze
+version:             0.1.0
+description:         Simple bittorrent client
+synopsis:            Simple bittorrent client
+homepage:            https://github.com/cronokirby/haze
+bug-reports:         https://github.com/cronokirby/haze/issues
+license:             MIT
+license-file:        LICENSE
+author:              Lúcás Meier
+maintainer:          cronokirby@gmail.com
+copyright:           2018 Lúcás Meier
+category:            Web
+build-type:          Simple
+extra-doc-files:     README.md
+                   , CHANGELOG.md
+cabal-version:       1.24
+tested-with:         GHC == 8.4.3
+
+source-repository head
+  type:                git
+  location:            https://github.com/Lúcás Meier/haze.git
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     Haze
+  ghc-options:         -Wall
+  build-depends:       base-noprelude >= 4.11 && < 5
+                     , relude         >= 0.4  && < 0.5
+  default-language:    Haskell2010
+  default-extensions:  NoImplicitPrelude
+  
+
+executable haze
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base-noprelude >= 4.11 && < 5
+                     , haze
+                     , relude         >= 0.4 && < 0.5
+  default-language:    Haskell2010
+  default-extensions: NoImplicitPrelude
