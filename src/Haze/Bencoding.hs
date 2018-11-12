@@ -10,7 +10,10 @@ isn't guaranteed to be in utf-8 text, however the strings
 contained inside the format are.
 -}
 module Haze.Bencoding
-    (
+    ( Bencoding(..)
+    , Encoder(..)
+    , encodeBen
+    , encode
     )
 where
 
@@ -18,7 +21,8 @@ import Relude
 
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.HashMap.Strict as HM
-import Data.Word (Word64)
+import qualified Data.Text as T
+import Data.Int (Int64)
 
 
 {- | Represents Bencoded data.
@@ -33,7 +37,39 @@ look to the other encoding functions instead.
 -}
 data Bencoding
     = BString !Text
-    | BInt !Word64
+    | BInt !Int64
     | BList ![Bencoding]
     | BMap !(HM.HashMap Text Bencoding)
     deriving (Eq, Show)
+
+
+-- | Represents the encoding of some type into Bencoding
+newtype Encoder a = Encoder 
+    { runEncoder :: a -> Bencoding 
+    }
+
+
+{- | Encode Bencoding as itself.
+
+This is useful for combining with 'encode'.
+-}
+encodeBen :: Encoder Bencoding
+encodeBen = Encoder id
+
+
+-- | Encode a thing as a bytestring.
+encode :: Encoder a -> a -> ByteString
+encode encoder = encodeBS . runEncoder encoder
+  where
+    encodeBS :: Bencoding -> ByteString
+    encodeBS (BString t) = 
+        show (T.length t) <> ":" <> encodeUtf8 t
+    encodeBS (BInt i)    =
+        "i" <> show i <> "e"
+    encodeBS (BList bs)  =
+        "l" <> foldMap encodeBS bs <> "e"
+    encodeBS (BMap mp)   =
+        "d" <> foldMap encodeKeyPair (HM.toList mp) <> "e"
+    encodeKeyPair :: (Text, Bencoding) -> ByteString
+    encodeKeyPair (k, v) = 
+        encodeBS (BString k) <> encodeBS v
