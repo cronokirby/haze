@@ -33,5 +33,8 @@ bencodingSpec =
         it "can encode hashmaps" $
             doEncode (BMap $ HM.fromList [("A", BInt 1)])
                 `shouldBe` "d1:Ai1ee"
+        it "encodes hashmaps with sorted keys" $
+            doEncode (BMap $ HM.fromList [("B", BInt 2), ("A", BInt 1)])
+                `shouldBe` "d1:Ai1e1:Bi2ee"
   where
     doEncode = encode encodeBen

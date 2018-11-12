@@ -68,7 +68,9 @@ encode encoder = encodeBS . runEncoder encoder
     encodeBS (BList bs)  =
         "l" <> foldMap encodeBS bs <> "e"
     encodeBS (BMap mp)   =
-        "d" <> foldMap encodeKeyPair (HM.toList mp) <> "e"
+        "d" <> foldMap encodeKeyPair (toSorted mp) <> "e"
+    toSorted :: Ord k => HM.HashMap k v -> [(k, v)]
+    toSorted = sortWith fst . HM.toList
     encodeKeyPair :: (Text, Bencoding) -> ByteString
     encodeKeyPair (k, v) = 
         encodeBS (BString k) <> encodeBS v
