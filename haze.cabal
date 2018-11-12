@@ -23,9 +23,12 @@ source-repository head
 library
   hs-source-dirs:      src
   exposed-modules:     Haze
+                       Haze.Bencoding
   ghc-options:         -Wall
-  build-depends:       base-noprelude >= 4.11 && < 5
-                     , relude         >= 0.4  && < 0.5
+  build-depends:       base-noprelude       >= 4.11 && < 5
+                     , bytestring           >= 0.10 && < 0.11
+                     , relude               >= 0.4  && < 0.5
+                     , unordered-containers >= 0.2 && < 0.3
   default-language:    Haskell2010
   default-extensions:  NoImplicitPrelude
   
