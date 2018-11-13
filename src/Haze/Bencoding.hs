@@ -105,7 +105,9 @@ decode (Decoder d) = fmap d . makeDecoderError . AP.parseOnly parse
     makeDecoderError = either (Left . DecodeError . toText) Right
     parse :: AP.Parser Bencoding
     parse = parseInt
-        <|> parseString
+        <|> (BString <$> parseString)
+        <|> parseList
+        <|> parseMap
     parseInt :: AP.Parser Bencoding
     parseInt = do
         _   <- AP.char 'i'
@@ -116,9 +118,26 @@ decode (Decoder d) = fmap d . makeDecoderError . AP.parseOnly parse
         signedInt :: AP.Parser Int64
         signedInt = (negate <$> (AP.char '-' *> AP.decimal))
                 <|> AP.decimal
-    parseString :: AP.Parser Bencoding
+    parseString :: AP.Parser Text
     parseString = do
         len    <- AP.decimal
         _      <- AP.char ':'
         string <- AP.take len
-        return . BString $ decodeUtf8 string
+        return (decodeUtf8 string)
+    parseList :: AP.Parser Bencoding
+    parseList = do
+        _  <- AP.char 'l'
+        xs <- AP.many' parse
+        _  <- AP.char 'e'
+        return (BList xs)
+    parseMap :: AP.Parser Bencoding
+    parseMap = do
+        _     <- AP.char 'd'
+        pairs <- AP.many' parsePair
+        _     <- AP.char 'e'
+        return . BMap . HM.fromList $ pairs
+    parsePair :: AP.Parser (Text, Bencoding)
+    parsePair = do
+        k <- parseString
+        v <- parse
+        return (k, v)

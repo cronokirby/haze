@@ -32,12 +32,22 @@ bencodingSpec = do
         it "encodes hashmaps with sorted keys" $
             doEncode (BMap $ HM.fromList [("B", BInt 2), ("A", BInt 1)])
                 `shouldBe` "d1:Ai1e1:Bi2ee"
-    describe "Bencoding.decode" $
+    describe "Bencoding.decode" $ do
         it "can decode primitive types" $ do
             doDecode "3:foo" `shouldBe` Right (BString "foo")
             doDecode "0:" `shouldBe` Right (BString "")
             doDecode "i42e" `shouldBe` Right (BInt 42)
             doDecode "i-3e" `shouldBe` Right (BInt (-3))
+        it "can decode lists" $ do
+            doDecode "le" `shouldBe` Right (BList [])
+            doDecode "l1:A1:Be" `shouldBe`
+                Right (BList [BString "A", BString "B"])
+            doDecode "ll1:Aee" `shouldBe` 
+                Right (BList [BList [BString "A"]])
+        it "can decode maps" $ do
+            doDecode "de" `shouldBe` Right (BMap $ HM.fromList [])
+            doDecode "d1:K1:Ve" `shouldBe` 
+                Right (BMap $ HM.fromList [("K", BString "V")])
   where
     doEncode = encode encodeBen
     doDecode = decode decodeBen
