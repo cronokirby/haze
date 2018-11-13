@@ -14,11 +14,15 @@ module Haze.Bencoding
     , Encoder(..)
     , encodeBen
     , encode
+    , Decoder(..)
+    , decodeBen
+    , decode
     )
 where
 
 import Relude
 
+import qualified Data.Attoparsec.ByteString.Char8 as AP
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Text as T
 import Data.Int (Int64)
@@ -74,3 +78,47 @@ encode encoder = encodeBS . runEncoder encoder
     encodeKeyPair :: (Text, Bencoding) -> ByteString
     encodeKeyPair (k, v) = 
         encodeBS (BString k) <> encodeBS v
+
+
+    
+-- | Represents Bencoding decoding errors for a bytestring
+newtype DecodeError = DecodeError Text deriving (Eq, Show)
+
+-- | Represents the decoding of some Bencoding structure into a type
+newtype Decoder a = Decoder
+    { runDecoder :: Bencoding -> a
+    }
+
+
+{- | Decode Bencoding as itself. 
+
+This is useful for combining with 'decode'.
+-}
+decodeBen :: Decoder Bencoding
+decodeBen = Decoder id
+
+
+-- | Decode a bytestring into something
+decode :: Decoder a -> ByteString -> Either DecodeError a
+decode (Decoder d) = fmap d . makeDecoderError . AP.parseOnly parse
+  where
+    makeDecoderError = either (Left . DecodeError . toText) Right
+    parse :: AP.Parser Bencoding
+    parse = parseInt
+        <|> parseString
+    parseInt :: AP.Parser Bencoding
+    parseInt = do
+        _   <- AP.char 'i'
+        int <- signedInt
+        _   <- AP.char 'e'
+        return (BInt int)
+      where
+        signedInt :: AP.Parser Int64
+        signedInt = (negate <$> (AP.char '-' *> AP.decimal))
+                <|> AP.decimal
+    parseString :: AP.Parser Bencoding
+    parseString = do
+        len    <- AP.decimal
+        _      <- AP.char ':'
+        string <- AP.take len
+        return . BString $ decodeUtf8 string
