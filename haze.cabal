@@ -23,12 +23,16 @@ source-repository head
 library
   hs-source-dirs:      src
   exposed-modules:     Haze
+                       Haze.Bencoding
   ghc-options:         -Wall
-  build-depends:       base-noprelude >= 4.11 && < 5
-                     , relude         >= 0.4  && < 0.5
+  build-depends:       base-noprelude       >= 4.11 && < 5
+                     , bytestring           >= 0.10 && < 0.11
+                     , relude               >= 0.4  && < 0.5
+                     , text                 >= 1.2  && < 1.3
+                     , unordered-containers >= 0.2  && < 0.3
   default-language:    Haskell2010
-  default-extensions:  NoImplicitPrelude
-  
+  default-extensions:  OverloadedStrings
+                     , NoImplicitPrelude 
 
 executable haze
   hs-source-dirs:      app
@@ -36,6 +40,23 @@ executable haze
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base-noprelude >= 4.11 && < 5
                      , haze
-                     , relude         >= 0.4 && < 0.5
+                     , relude         >= 0.4  && < 0.5
   default-language:    Haskell2010
-  default-extensions: NoImplicitPrelude
+  default-extensions:  OverloadedStrings
+                     , NoImplicitPrelude
+
+test-suite darby-test
+  type:              exitcode-stdio-1.0
+  main-is:           Spec.hs
+  hs-source-dirs:    test
+  ghc-options:       -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+                       base-noprelude       >= 4.11 && < 5
+                     , bytestring           >= 0.10 && < 0.11
+                     , haze
+                     , hspec                >= 2.5  && < 2.7
+                     , relude               >= 0.4  && < 0.5
+                     , unordered-containers >= 0.2  && < 0.3
+  default-language:    Haskell2010
+  default-extensions:  OverloadedStrings
+                     , NoImplicitPrelude
