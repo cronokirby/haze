@@ -22,27 +22,26 @@ where
 
 import Relude
 
+import qualified Data.ByteString.Char8 as BS
 import qualified Data.Attoparsec.ByteString.Char8 as AP
 import qualified Data.HashMap.Strict as HM
-import qualified Data.Text as T
 import Data.Int (Int64)
 
 
 {- | Represents Bencoded data.
 
-Note that although Bencoded data is stored as bytes,
-each string in the format is valid ASCII, and thus is
-represented as Text.
+Bencoded strings can be arbitrary byte sequences, and aren't
+always guaranteed to be valid text.
 
 The show instance just shows the raw data structure,
 the encode the structure as a sequence of bytes,
 look to the other encoding functions instead.
 -}
 data Bencoding
-    = BString !Text
+    = BString !ByteString
     | BInt !Int64
     | BList ![Bencoding]
-    | BMap !(HM.HashMap Text Bencoding)
+    | BMap !(HM.HashMap ByteString Bencoding)
     deriving (Eq, Show)
 
 
@@ -66,7 +65,7 @@ encode encoder = encodeBS . runEncoder encoder
   where
     encodeBS :: Bencoding -> ByteString
     encodeBS (BString t) = 
-        show (T.length t) <> ":" <> encodeUtf8 t
+        show (BS.length t) <> ":" <> t
     encodeBS (BInt i)    =
         "i" <> show i <> "e"
     encodeBS (BList bs)  =
@@ -75,7 +74,7 @@ encode encoder = encodeBS . runEncoder encoder
         "d" <> foldMap encodeKeyPair (toSorted mp) <> "e"
     toSorted :: Ord k => HM.HashMap k v -> [(k, v)]
     toSorted = sortWith fst . HM.toList
-    encodeKeyPair :: (Text, Bencoding) -> ByteString
+    encodeKeyPair :: (ByteString, Bencoding) -> ByteString
     encodeKeyPair (k, v) = 
         encodeBS (BString k) <> encodeBS v
 
@@ -118,12 +117,11 @@ decode (Decoder d) = fmap d . makeDecoderError . AP.parseOnly parse
         signedInt :: AP.Parser Int64
         signedInt = (negate <$> (AP.char '-' *> AP.decimal))
                 <|> AP.decimal
-    parseString :: AP.Parser Text
+    parseString :: AP.Parser ByteString
     parseString = do
         len    <- AP.decimal
         _      <- AP.char ':'
-        string <- AP.take len
-        return (decodeUtf8 string)
+        AP.take len
     parseList :: AP.Parser Bencoding
     parseList = do
         _  <- AP.char 'l'
@@ -136,7 +134,7 @@ decode (Decoder d) = fmap d . makeDecoderError . AP.parseOnly parse
         pairs <- AP.many' parsePair
         _     <- AP.char 'e'
         return . BMap . HM.fromList $ pairs
-    parsePair :: AP.Parser (Text, Bencoding)
+    parsePair :: AP.Parser (ByteString, Bencoding)
     parsePair = do
         k <- parseString
         v <- parse
