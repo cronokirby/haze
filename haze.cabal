@@ -55,6 +55,7 @@ test-suite darby-test
                        base-noprelude       >= 4.11 && < 5
                      , bytestring           >= 0.10 && < 0.11
                      , haze
+                     , hedgehog             >= 0.6  && < 0.7
                      , hspec                >= 2.5  && < 2.7
                      , relude               >= 0.4  && < 0.5
                      , unordered-containers >= 0.2  && < 0.3

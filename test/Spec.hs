@@ -1,13 +1,18 @@
 import Relude
 
 import qualified Data.HashMap.Strict as HM
+import Hedgehog
+import qualified Hedgehog.Gen as Gen
+import qualified Hedgehog.Range as Range
 import Test.Hspec
 
 import Haze.Bencoding
 
 
 main :: IO ()
-main = hspec bencodingSpec
+main = do
+    hspec bencodingSpec
+    propertyTests
 
 
 bencodingSpec :: SpecWith ()
@@ -51,3 +56,33 @@ bencodingSpec = do
   where
     doEncode = encode encodeBen
     doDecode = decode decodeBen
+
+
+propertyTests :: IO ()
+propertyTests = void $
+    checkParallel $ Group "Bencoding Properties" [
+        ("prop_encode_decode", propEncodeDecode)
+    ]
+
+propEncodeDecode :: Property
+propEncodeDecode =
+    property $ do
+        ben <- forAll $ genBencoding
+        decode decodeBen (encode encodeBen ben) === Right ben
+  where
+    genBencoding :: MonadGen m => m Bencoding
+    genBencoding = Gen.recursive Gen.choice
+        [genBInt, genBString]
+        [genBList]
+    genBInt :: MonadGen m => m Bencoding
+    genBInt = BInt <$> Gen.int64 (Range.linear (-1000) 1000)
+    genBString :: MonadGen m => m Bencoding
+    genBString = BString <$> Gen.bytes (Range.linear 0 100)
+    primitive :: MonadGen m => m Bencoding
+    primitive = Gen.choice [genBInt, genBString]
+    genBList :: MonadGen m => m Bencoding
+    genBList = BList <$> Gen.list (Range.linear 0 64) genBencoding
+    genBMap :: MonadGen m => m Bencoding 
+    genBMap = BMap . HM.fromList <$> Gen.list (Range.linear 0 64) pair
+      where
+        pair = (,) <$> Gen.bytes (Range.linear 0 10) <*> genBencoding
