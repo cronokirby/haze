@@ -67,19 +67,17 @@ propertyTests = void $
 propEncodeDecode :: Property
 propEncodeDecode =
     property $ do
-        ben <- forAll $ genBencoding
+        ben <- forAll genBencoding
         decode decodeBen (encode encodeBen ben) === Right ben
   where
     genBencoding :: MonadGen m => m Bencoding
     genBencoding = Gen.recursive Gen.choice
         [genBInt, genBString]
-        [genBList]
+        [genBList, genBMap]
     genBInt :: MonadGen m => m Bencoding
     genBInt = BInt <$> Gen.int64 (Range.linear (-1000) 1000)
     genBString :: MonadGen m => m Bencoding
     genBString = BString <$> Gen.bytes (Range.linear 0 100)
-    primitive :: MonadGen m => m Bencoding
-    primitive = Gen.choice [genBInt, genBString]
     genBList :: MonadGen m => m Bencoding
     genBList = BList <$> Gen.list (Range.linear 0 64) genBencoding
     genBMap :: MonadGen m => m Bencoding 
