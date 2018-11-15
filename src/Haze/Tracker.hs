@@ -17,6 +17,11 @@ module Haze.Tracker
     , MetaInfo(..)
     , decodeMeta
     , metaFromBytes
+    , Announce(..)
+    , AnnounceInfo(..)
+    , Peer(..)
+    , decodeAnnounce
+    , announceFromHTTP
     )
 where
 
@@ -201,6 +206,17 @@ data Peer = Peer
     , peerPort :: PortNumber
     }
 
+{- | This reads a bytestring announce from HTTP
+
+HTTP and UDP trackers differ in that HTTP trackers
+will send back a bencoded bytestring to read the
+announce information from, but UDP trackers will
+send a bytestring without bencoding.
+This parses the bencoded bytestring from HTTP.
+-}
+announceFromHTTP :: ByteString -> Either DecodeError Announce
+announceFromHTTP bs = decode decodeAnnounce bs
+    >>= maybe (Left (DecodeError "Bad Announce Data")) Right
 
 -- | A Bencoding decoder for the Announce data
 decodeAnnounce :: Decoder (Maybe Announce)
