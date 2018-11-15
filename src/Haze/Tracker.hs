@@ -255,7 +255,6 @@ decodeAnnounce = Decoder doDecode
             peerPort <- withKey "port" mp tryNum
             return (Peer {..})
         getPeer _          = Nothing
-    dictpeers _         = Nothing
     binPeers :: Bencoding -> Maybe [Peer]
     binPeers (BString bs)
         -- The bytestring isn't a multiple of 6
