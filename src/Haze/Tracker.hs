@@ -1,13 +1,13 @@
 {-# LANGUAGE RecordWildCards #-}
 {- |
-Description: Contains functions for parsing .torrent files
+Description: Contains functions related to trackers
 
-Each .torrent file is a MetaInfo file, containing
-information about the files in the torrent. This module
-exports data structure and functions to read and operate
-on these files.
+This file provides a more abstract description of
+the communication protocol with trackers. First it
+specificies the data in a .torrent file with MetaInfo,
+then data sent to and returned from a tracker.
 -}
-module Haze.MetaInfo 
+module Haze.Tracker 
     ( Tracker(..)
     , TieredList(..)
     , MD5Sum(..)

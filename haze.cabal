@@ -24,7 +24,7 @@ library
   hs-source-dirs:      src
   exposed-modules:     Haze
                        Haze.Bencoding
-                       Haze.MetaInfo
+                       Haze.Tracker
   ghc-options:         -Wall
   build-depends:       base-noprelude       >= 4.11 && < 5
                      , attoparsec           >= 0.13 && < 0.14
