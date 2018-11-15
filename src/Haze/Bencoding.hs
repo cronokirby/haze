@@ -14,6 +14,7 @@ module Haze.Bencoding
     , Encoder(..)
     , encodeBen
     , encode
+    , DecodeError(..)
     , Decoder(..)
     , decodeBen
     , decode

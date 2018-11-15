@@ -16,6 +16,7 @@ module Haze.MetaInfo
     , FileItem(..)
     , MetaInfo(..)
     , decodeMeta
+    , metaFromBytes
     )
 where
 
@@ -25,7 +26,8 @@ import qualified Data.HashMap.Strict as HM
 import Data.Time.Clock (UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 
-import Haze.Bencoding (Bencoding(..), Decoder(..))
+import Haze.Bencoding (Bencoding(..), Decoder(..),
+                       decode, DecodeError(..))
 
 
 -- | Represents the URL for a torrent Tracker
@@ -86,6 +88,12 @@ data MetaInfo = MetaInfo
     , metaEncoding :: Maybe Text
     }
     deriving (Show)
+
+
+-- | Try and decode a meta file from a bytestring
+metaFromBytes :: ByteString -> Either DecodeError MetaInfo
+metaFromBytes bs = decode decodeMeta bs 
+    >>= maybe (Left (DecodeError "Bad MetaInfo file")) Right
 
 
 type BenMap = HM.HashMap ByteString Bencoding
