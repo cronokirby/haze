@@ -22,9 +22,11 @@ where
 
 import Relude
 
+import qualified Data.ByteString.Char8 as BS
 import qualified Data.HashMap.Strict as HM
 import Data.Time.Clock (UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Network.Socket (HostName, PortNumber)
 import Text.Show (Show(..))
 
 import Haze.Bencoding (Bencoding(..), Decoder(..),
@@ -117,24 +119,10 @@ decodeMeta = Decoder doDecode
         let metaEncoding  = withKey "encoding" mp tryText
         return (MetaInfo {..})
     doDecode _          = Nothing
-    withKey :: ByteString -> BenMap 
-               -> (Bencoding -> Maybe a) -> Maybe a
-    withKey k mp next = HM.lookup k mp >>= next
     getBool :: ByteString -> BenMap -> Bool
     getBool k mp = case HM.lookup k mp of
         Just (BInt 1) -> True
         _             -> False
-    tryInt :: Bencoding -> Maybe Int64
-    tryInt (BInt i) = Just i
-    tryInt _        = Nothing
-    tryBS :: Bencoding -> Maybe ByteString
-    tryBS (BString bs) = Just bs
-    tryBS _            = Nothing
-    tryText :: Bencoding -> Maybe Text
-    tryText = fmap decodeUtf8 . tryBS
-    tryList :: Bencoding -> Maybe [Bencoding]
-    tryList (BList l) = Just l
-    tryList _         = Nothing
     getAnnounces :: ByteString -> BenMap -> Maybe (TieredList Tracker)
     getAnnounces k mp = 
         withKey k mp 
@@ -165,7 +153,7 @@ decodeMeta = Decoder doDecode
         return (len, md5)
     getSingle :: BenMap -> Maybe FileInfo
     getSingle mp = do
-        name <- withKey "name" mp tryText
+        name       <- withKey "name" mp tryText
         (len, md5) <- getFilePart mp
         return (SingleFile name len md5)
     getMulti :: BenMap -> Bencoding -> Maybe FileInfo
@@ -181,3 +169,101 @@ decodeMeta = Decoder doDecode
                 (traverse tryText <=< tryList)
         return (FileItem path len md5)
     getFileItem _         = Nothing
+
+
+-- | Represents the announce response from a tracker
+data Announce
+    -- | The request to the tracker was bad
+    = FailedAnnounce Text
+    | GoodAnnounce AnnounceInfo
+
+-- | The information of a successful announce response
+data AnnounceInfo = AnnounceInfo
+    { annWarning :: Maybe Text -- ^ A warning message
+    , annInterval :: Int -- ^ Seconds between requests
+    -- | If present, the client must not act more frequently
+    , annMinInterval :: Maybe Int
+    , annTransactionID :: ByteString
+    -- | The number of peers with the complete file
+    , annSeeders :: Int
+    -- | The number of peers without the complete file
+    , annLeechers :: Int
+    , annPeers :: [Peer] 
+    }
+
+
+-- | Represents a peer in the swarm
+data Peer = Peer
+    { peerID :: Text
+    , peerHost :: HostName
+    , peerPort :: PortNumber
+    }
+
+
+-- | A Bencoding decoder for the Announce data
+decodeAnnounce :: Decoder (Maybe Announce)
+decodeAnnounce = Decoder doDecode
+  where
+    doDecode :: Bencoding -> Maybe Announce
+    doDecode (BMap mp) = 
+        case HM.lookup "failure reason" mp of
+            Just (BString s) ->
+                Just (FailedAnnounce (decodeUtf8 s))
+            Nothing          -> do
+                info <- decodeAnnounceInfo mp
+                return (GoodAnnounce info)
+            Just _           ->
+                Nothing
+    doDecode _         = Nothing
+    decodeAnnounceInfo :: BenMap -> Maybe AnnounceInfo
+    decodeAnnounceInfo mp = do
+        let annWarning     = withKey "warning message" mp tryText
+        annInterval       <- withKey "interval" mp tryNum
+        let annMinInterval = withKey "min interval" mp tryNum
+        annTransactionID  <- withKey "tracker id" mp tryBS
+        annSeeders        <- withKey "complete" mp tryNum
+        annLeechers       <- withKey "incomplete" mp tryNum
+        pInfo             <- HM.lookup "peers" mp
+        annPeers          <- dictPeers pInfo 
+                         <|> binPeers pInfo
+        return (AnnounceInfo {..})
+    dictPeers :: Bencoding -> Maybe [Peer]
+    dictPeers = tryList >=> traverse getPeer
+      where
+        getPeer :: Bencoding -> Maybe Peer
+        getPeer (BMap mp) = do
+            peerID   <- withKey "peer id" mp tryText
+            peerHost <- BS.unpack <$> withKey "ip" mp tryBS
+            peerPort <- withKey "port" mp tryNum
+            return (Peer {..})
+        getPeer _          = Nothing
+    dictpeers _         = Nothing
+    binPeers :: Bencoding -> Maybe [Peer]
+    binPeers _ = Nothing
+
+
+{- Decoding utilities -}
+
+withKey :: ByteString -> BenMap 
+        -> (Bencoding -> Maybe a) -> Maybe a
+withKey k mp next = HM.lookup k mp >>= next
+
+tryInt :: Bencoding -> Maybe Int64
+tryInt (BInt i) = Just i
+tryInt _        = Nothing
+
+tryNum :: Num n => Bencoding -> Maybe n
+tryNum (BInt i) = 
+    Just (fromInteger (toInteger i))
+tryNum _        = Nothing
+
+tryBS :: Bencoding -> Maybe ByteString
+tryBS (BString bs) = Just bs
+tryBS _            = Nothing
+
+tryText :: Bencoding -> Maybe Text
+tryText = fmap decodeUtf8 . tryBS
+
+tryList :: Bencoding -> Maybe [Bencoding]
+tryList (BList l) = Just l
+tryList _         = Nothing
