@@ -63,9 +63,9 @@ the single file.
 -}
 data FileInfo 
     -- | A single file, with name, length, and md5 sum
-    = SingleFile Text Int64 (Maybe MD5Sum)
+    = SingleFile FilePath Int64 (Maybe MD5Sum)
     -- | Multiple files, with directory name
-    |  MultiFile Text [FileItem]
+    |  MultiFile FilePath [FileItem]
     deriving (Show)
 
 {- | A single file in a multi file torrent
@@ -75,7 +75,7 @@ from the 'SingleFile' branch of 'FileInfo'. Notably, instead of
 having a name, it instead has a list of strings representing
 the full file path, which must be respected.
 -}
-data FileItem = FileItem [Text] Int64 (Maybe MD5Sum) deriving (Show)
+data FileItem = FileItem [FilePath] Int64 (Maybe MD5Sum) deriving (Show)
 
 {- | Represents the information in a .torrent file
 stem.Directory
@@ -153,20 +153,20 @@ decodeMeta = Decoder doDecode
         return (len, md5)
     getSingle :: BenMap -> Maybe FileInfo
     getSingle mp = do
-        name       <- withKey "name" mp tryText
+        name       <- withKey "name" mp tryPath
         (len, md5) <- getFilePart mp
         return (SingleFile name len md5)
     getMulti :: BenMap -> Bencoding -> Maybe FileInfo
     getMulti mp (BList l) = do
-        name  <- withKey "name" mp tryText
+        name  <- withKey "name" mp tryPath
         files <- traverse getFileItem l
         return (MultiFile name files)
     getMulti _ _         = Nothing
     getFileItem :: Bencoding -> Maybe FileItem
     getFileItem (BMap mp) = do
         (len, md5) <- getFilePart mp
-        path <- withKey "path" mp 
-                (traverse tryText <=< tryList)
+        path <- withKey "path" mp
+                (tryList >=> traverse tryPath)
         return (FileItem path len md5)
     getFileItem _         = Nothing
 
@@ -260,6 +260,9 @@ tryNum _        = Nothing
 tryBS :: Bencoding -> Maybe ByteString
 tryBS (BString bs) = Just bs
 tryBS _            = Nothing
+
+tryPath :: Bencoding -> Maybe FilePath
+tryPath = fmap BS.unpack  . tryBS
 
 tryText :: Bencoding -> Maybe Text
 tryText = fmap decodeUtf8 . tryBS
