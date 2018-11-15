@@ -22,7 +22,9 @@ where
 
 import Relude
 
-import qualified Data.ByteString.Char8 as BS
+import Data.Bits ((.|.), shift)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.HashMap.Strict as HM
 import Data.Time.Clock (UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
@@ -194,7 +196,7 @@ data AnnounceInfo = AnnounceInfo
 
 -- | Represents a peer in the swarm
 data Peer = Peer
-    { peerID :: Text
+    { peerID :: Maybe Text
     , peerHost :: HostName
     , peerPort :: PortNumber
     }
@@ -232,14 +234,42 @@ decodeAnnounce = Decoder doDecode
       where
         getPeer :: Bencoding -> Maybe Peer
         getPeer (BMap mp) = do
-            peerID   <- withKey "peer id" mp tryText
-            peerHost <- BS.unpack <$> withKey "ip" mp tryBS
+            let peerID = withKey "peer id" mp tryText
+            peerHost <- BSC.unpack <$> withKey "ip" mp tryBS
             peerPort <- withKey "port" mp tryNum
             return (Peer {..})
         getPeer _          = Nothing
     dictpeers _         = Nothing
     binPeers :: Bencoding -> Maybe [Peer]
+    binPeers (BString bs)
+        -- The bytestring isn't a multiple of 6
+        | BS.length bs `mod` 6 /= 0 = Nothing
+        | otherwise                 =
+            let chunks = makeChunks 6 bs
+                makePeerHost chunk =
+                    Relude.show =<< BS.unpack (BS.take 4 chunk)
+                makePeerID chunk = 
+                    -- this is safe because of when we call this
+                    let [a, b] = BS.unpack (BS.drop 4 chunk)
+                    in fromInteger (toInteger (makeWord16 a b))
+            in Just $ map (\chunk -> 
+                Peer Nothing 
+                (makePeerHost chunk) 
+                (makePeerID chunk))
+                chunks
     binPeers _ = Nothing
+    makeWord16 :: Word8 -> Word8 -> Word16
+    makeWord16 a b = 
+        let 
+            bigA :: Word16
+            bigA = fromIntegral a
+            bigB :: Word16
+            bigB = fromIntegral b
+        in bigB .|. (shift bigA 8)
+    makeChunks :: Int -> ByteString -> [ByteString]
+    makeChunks size bs
+        | BS.null bs = BS.take size bs : makeChunks size bs
+        | otherwise  = []
 
 
 {- Decoding utilities -}
@@ -262,7 +292,7 @@ tryBS (BString bs) = Just bs
 tryBS _            = Nothing
 
 tryPath :: Bencoding -> Maybe FilePath
-tryPath = fmap BS.unpack  . tryBS
+tryPath = fmap BSC.unpack  . tryBS
 
 tryText :: Bencoding -> Maybe Text
 tryText = fmap decodeUtf8 . tryBS
