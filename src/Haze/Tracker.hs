@@ -95,7 +95,7 @@ data MetaInfo = MetaInfo
     , metaPrivate :: Bool
     , metaFile :: FileInfo
     , metaAnnounce :: Text
-    , metaAnnounceList :: TieredList Tracker 
+    , metaAnnounceList :: Maybe (TieredList Tracker)
     , metaCreation :: Maybe UTCTime
     , metaComment :: Maybe Text
     , metaCreatedBy :: Maybe Text 
@@ -119,7 +119,7 @@ decodeMeta = Decoder doDecode
         info <- HM.lookup "info" mp
         (metaPieces, metaPrivate, metaFile) <- getInfo info
         metaAnnounce     <- withKey "announce" mp tryText
-        metaAnnounceList <- getAnnounces "announce-list" mp
+        let metaAnnounceList = getAnnounces "announce-list" mp
         let metaCreation  = withKey "creation date" mp tryDate
         let metaComment   = withKey "comment" mp tryText
         let metaCreatedBy = withKey "created by" mp tryText
