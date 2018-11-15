@@ -25,6 +25,7 @@ import Relude
 import qualified Data.HashMap.Strict as HM
 import Data.Time.Clock (UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Text.Show (Show(..))
 
 import Haze.Bencoding (Bencoding(..), Decoder(..),
                        decode, DecodeError(..))
@@ -46,7 +47,11 @@ data TieredList a = TieredList [[a]] deriving (Show)
 newtype MD5Sum = MD5Sum ByteString deriving (Show)
 
 -- | Represents the concatenation of multiple SHA pieces.
-data SHAPieces = SHAPieces Int64 ByteString deriving (Show)
+data SHAPieces = SHAPieces Int64 ByteString
+
+instance Show SHAPieces where
+    show (SHAPieces i _) = 
+        "SHAPieces " ++ Relude.show i ++ " (..bytes)"
 
 {- | Represents the information in the `info` of a metainfo file
 
@@ -99,9 +104,9 @@ metaFromBytes bs = decode decodeMeta bs
 type BenMap = HM.HashMap ByteString Bencoding
 
 decodeMeta :: Decoder (Maybe MetaInfo)
-decodeMeta = Decoder decode
+decodeMeta = Decoder doDecode
   where
-    decode (BMap mp) = do
+    doDecode (BMap mp) = do
         info <- HM.lookup "info" mp
         (metaPieces, metaPrivate, metaFile) <- getInfo info
         metaAnnounce     <- withKey "announce" mp tryText
@@ -111,7 +116,7 @@ decodeMeta = Decoder decode
         let metaCreatedBy = withKey "created by" mp tryText
         let metaEncoding  = withKey "encoding" mp tryText
         return (MetaInfo {..})
-    decode _          = Nothing
+    doDecode _          = Nothing
     withKey :: ByteString -> BenMap 
                -> (Bencoding -> Maybe a) -> Maybe a
     withKey k mp next = HM.lookup k mp >>= next
