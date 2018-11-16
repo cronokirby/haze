@@ -26,6 +26,8 @@ module Haze.Tracker
     , announceFromHTTP
     , ReqEvent(..)
     , TrackerRequest(..)
+    , newTrackerRequest
+    , trackerQuery
     )
 where
 
@@ -118,6 +120,14 @@ metaFromBytes :: ByteString -> Either DecodeError MetaInfo
 metaFromBytes bs = decode decodeMeta bs 
     >>= maybe (Left (DecodeError "Bad MetaInfo file")) Right
 
+-- | Get the total size (bytes) of all the files in a torrent
+totalFileSize :: MetaInfo -> Int64
+totalFileSize meta = case metaFile meta of
+    SingleFile _ len _ -> len
+    MultiFile _ items  -> sum (map itemLen items)
+  where
+    itemLen (FileItem _ len _) = len
+
 
 type BenMap = HM.HashMap ByteString Bencoding
 
@@ -196,18 +206,22 @@ data ReqEvent
     | ReqStopped
     -- | The request has successfully downloaded everything
     | ReqCompleted
+    -- | No new information about the request
+    | ReqEmpty
+    deriving (Show)
 
 -- | Represents the information in a request to a tracker
 data TrackerRequest = TrackerRequest
     { treqInfoHash :: SHA1
     -- | Represents the peer id for this client
     , treqPeerID :: ByteString
+    , treqPort :: PortNumber
     -- | The total number of bytes uploaded
-    , treqUploaded :: Int
+    , treqUploaded :: Int64
     -- | The total number of bytes downloaded
-    , treqDownloaded :: Int
+    , treqDownloaded :: Int64
     -- | The number of bytes in the file left to download
-    , treqLeft :: Int
+    , treqLeft :: Int64
     -- | Whether or not the client expects a compact response
     , treqCompact :: Bool
     -- | The current state of this ongoing request
@@ -216,6 +230,35 @@ data TrackerRequest = TrackerRequest
     -- | This is to be included if the tracker sent it
     , treqTransactionID :: Maybe ByteString
     }
+    deriving (Show)
+
+-- | Constructs the tracker request to be used at the start of a session
+newTrackerRequest :: MetaInfo -> ByteString -> TrackerRequest
+newTrackerRequest meta@MetaInfo{..} peerID = TrackerRequest 
+    metaInfoHash peerID 6881 0 0 (totalFileSize meta) 
+    True ReqStarted Nothing Nothing
+
+
+-- | Encodes a 'TrackerRequest' as query parameters
+trackerQuery :: TrackerRequest -> [(ByteString, Maybe ByteString)]
+trackerQuery TrackerRequest{..} = map (\(a, b) -> (a, Just b)) $
+    [ ("info_hash", getSHA1 treqInfoHash)
+    , ("peer_id", treqPeerID)
+    , ("port", Relude.show treqPort)
+    , ("uploaded", Relude.show treqUploaded)
+    , ("downloaded", Relude.show treqDownloaded)
+    , ("left", Relude.show treqLeft)
+    , ("compact", if treqCompact then "1" else "0")
+    ] ++
+    eventQuery ++
+    maybe [] (\i -> [("numwant", Relude.show i)]) treqNumWant ++
+    maybe [] (\s -> [("trackerid", s)]) treqTransactionID
+  where
+    eventQuery = case treqEvent of
+        ReqStarted -> [("event", "started")]
+        ReqStopped -> [("event", "stopped")]
+        ReqCompleted -> [("event", "completed")]
+        ReqEmpty -> []
 
 
 -- | Represents the announce response from a tracker
@@ -223,6 +266,7 @@ data Announce
     -- | The request to the tracker was bad
     = FailedAnnounce Text
     | GoodAnnounce AnnounceInfo
+    deriving (Show)
 
 -- | The information of a successful announce response
 data AnnounceInfo = AnnounceInfo
@@ -230,13 +274,14 @@ data AnnounceInfo = AnnounceInfo
     , annInterval :: Int -- ^ Seconds between requests
     -- | If present, the client must not act more frequently
     , annMinInterval :: Maybe Int
-    , annTransactionID :: ByteString
+    , annTransactionID :: Maybe ByteString
     -- | The number of peers with the complete file
-    , annSeeders :: Int
+    , annSeeders :: Maybe Int
     -- | The number of peers without the complete file
-    , annLeechers :: Int
+    , annLeechers :: Maybe Int
     , annPeers :: [Peer] 
     }
+    deriving (Show)
 
 
 -- | Represents a peer in the swarm
@@ -245,6 +290,7 @@ data Peer = Peer
     , peerHost :: HostName
     , peerPort :: PortNumber
     }
+    deriving (Show)
 
 {- | This reads a bytestring announce from HTTP
 
@@ -275,15 +321,15 @@ decodeAnnounce = Decoder doDecode
     doDecode _         = Nothing
     decodeAnnounceInfo :: BenMap -> Maybe AnnounceInfo
     decodeAnnounceInfo mp = do
-        let annWarning     = withKey "warning message" mp tryText
-        annInterval       <- withKey "interval" mp tryNum
-        let annMinInterval = withKey "min interval" mp tryNum
-        annTransactionID  <- withKey "tracker id" mp tryBS
-        annSeeders        <- withKey "complete" mp tryNum
-        annLeechers       <- withKey "incomplete" mp tryNum
-        pInfo             <- HM.lookup "peers" mp
-        annPeers          <- dictPeers pInfo 
-                         <|> binPeers pInfo
+        let annWarning       = withKey "warning message" mp tryText
+        annInterval         <- withKey "interval" mp tryNum
+        let annMinInterval   = withKey "min interval" mp tryNum
+        let annTransactionID = withKey "tracker id" mp tryBS
+        let annSeeders       = withKey "complete" mp tryNum
+        let annLeechers      = withKey "incomplete" mp tryNum
+        pInfo               <- HM.lookup "peers" mp
+        annPeers            <- dictPeers pInfo 
+                           <|> binPeers pInfo
         return (AnnounceInfo {..})
     dictPeers :: Bencoding -> Maybe [Peer]
     dictPeers = tryList >=> traverse getPeer
@@ -303,14 +349,14 @@ decodeAnnounce = Decoder doDecode
             let chunks = makeChunks 6 bs
                 makePeerHost chunk =
                     Relude.show =<< BS.unpack (BS.take 4 chunk)
-                makePeerID chunk = 
+                makePeerPort chunk = 
                     -- this is safe because of when we call this
                     let [a, b] = BS.unpack (BS.drop 4 chunk)
                     in fromInteger (toInteger (makeWord16 a b))
             in Just $ map (\chunk -> 
                 Peer Nothing 
                 (makePeerHost chunk) 
-                (makePeerID chunk))
+                (makePeerPort chunk))
                 chunks
     binPeers _ = Nothing
     makeWord16 :: Word8 -> Word8 -> Word16
@@ -323,8 +369,9 @@ decodeAnnounce = Decoder doDecode
         in bigB .|. shift bigA 8
     makeChunks :: Int -> ByteString -> [ByteString]
     makeChunks size bs
-        | BS.null bs = BS.take size bs : makeChunks size bs
-        | otherwise  = []
+        | BS.null bs = []
+        | otherwise  = BS.take size bs 
+                     : makeChunks size (BS.drop size bs)
 
 
 {- Decoding utilities -}

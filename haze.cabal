@@ -24,12 +24,15 @@ library
   hs-source-dirs:      src
   exposed-modules:     Haze
                        Haze.Bencoding
+                       Haze.Client
                        Haze.Tracker
   ghc-options:         -Wall
   build-depends:       base-noprelude       >= 4.11 && < 5
                      , attoparsec           >= 0.13 && < 0.14
                      , bytestring           >= 0.10 && < 0.11
                      , cryptohash-sha1      >= 0.11 && < 0.12
+                     , http-client          >= 0.5  && < 0.6
+                     , http-types           >= 0.12 && < 0.13
                      , network              >= 2.6  && < 2.7
                      , relude               >= 0.4  && < 0.5
                      , text                 >= 1.2  && < 1.3

@@ -5,5 +5,13 @@ where
 
 import Relude
 
+import System.Environment (getArgs)
+
+import Haze.Client (launchClient)
+
 runHaze :: IO ()
-runHaze = putStrLn "running Haze..."
+runHaze = do
+    args <- getArgs
+    case args of
+        []     -> putStrLn "Please give me a file"
+        file:_ -> launchClient file
