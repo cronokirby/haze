@@ -11,6 +11,8 @@ module Haze.Tracker
     ( Tracker(..)
     , TieredList(..)
     , MD5Sum(..)
+    , SHA1
+    , getSHA1
     , SHAPieces(..)
     , FileInfo(..)
     , FileItem(..)
@@ -27,6 +29,7 @@ where
 
 import Relude
 
+import Crypto.Hash.SHA1 as SHA1
 import Data.Bits ((.|.), shift)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
@@ -36,8 +39,8 @@ import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Network.Socket (HostName, PortNumber)
 import Text.Show (Show(..))
 
-import Haze.Bencoding (Bencoding(..), Decoder(..),
-                       decode, DecodeError(..))
+import Haze.Bencoding (Bencoding(..), Decoder(..), DecodeError(..),
+                       decode, encode, encodeBen)
 
 
 -- | Represents the URL for a torrent Tracker
@@ -50,10 +53,13 @@ to the next tier. In MetaInfo files, multiple
 tiers of trackers are provided, with each tier needing
 to be tried before the subsequent one is used.
 -}
-data TieredList a = TieredList [[a]] deriving (Show)
+newtype TieredList a = TieredList [[a]] deriving (Show)
 
 -- | Represents the MD5 sum of a file
 newtype MD5Sum = MD5Sum ByteString deriving (Show)
+
+-- | Represents a 20 byte SHA1 hash
+newtype SHA1 = SHA1 { getSHA1 :: ByteString } deriving (Show)
 
 -- | Represents the concatenation of multiple SHA pieces.
 data SHAPieces = SHAPieces Int64 ByteString
@@ -94,6 +100,7 @@ data MetaInfo = MetaInfo
     { metaPieces :: SHAPieces
     , metaPrivate :: Bool
     , metaFile :: FileInfo
+    , metaInfoHash :: SHA1
     , metaAnnounce :: Text
     , metaAnnounceList :: Maybe (TieredList Tracker)
     , metaCreation :: Maybe UTCTime
@@ -118,6 +125,7 @@ decodeMeta = Decoder doDecode
     doDecode (BMap mp) = do
         info <- HM.lookup "info" mp
         (metaPieces, metaPrivate, metaFile) <- getInfo info
+        let metaInfoHash = SHA1 $ SHA1.hash (encode encodeBen info)
         metaAnnounce     <- withKey "announce" mp tryText
         let metaAnnounceList = getAnnounces "announce-list" mp
         let metaCreation  = withKey "creation date" mp tryDate
@@ -176,6 +184,36 @@ decodeMeta = Decoder doDecode
                 (tryList >=> traverse tryPath)
         return (FileItem path len md5)
     getFileItem _         = Nothing
+
+
+-- | Information sent to the tracker about the state of the request
+data ReqEvent
+    -- | The request has just started
+    = ReqStarted
+    -- | The request has stopped
+    | ReqStopped
+    -- | The request has successfully downloaded everything
+    | ReqCompleted
+
+-- | Represents the information in a request to a tracker
+data TrackerRequest = TrackerRequest
+    { treqInfoHash :: SHA1
+    -- | Represents the peer id for this client
+    , treqPeerID :: ByteString
+    -- | The total number of bytes uploaded
+    , treqUploaded :: Int
+    -- | The total number of bytes downloaded
+    , treqDownloaded :: Int
+    -- | The number of bytes in the file left to download
+    , treqLeft :: Int
+    -- | Whether or not the client expects a compact response
+    , treqCompact :: Bool
+    -- | The current state of this ongoing request
+    , treqEvent :: ReqEvent
+    , treqNumWant :: Maybe Int
+    -- | This is to be included if the tracker sent it
+    , treqTransactionID :: Maybe ByteString
+    }
 
 
 -- | Represents the announce response from a tracker
