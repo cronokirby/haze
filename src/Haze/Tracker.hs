@@ -347,8 +347,9 @@ decodeAnnounce = Decoder doDecode
         | BS.length bs `mod` 6 /= 0 = Nothing
         | otherwise                 =
             let chunks = makeChunks 6 bs
-                makePeerHost chunk =
-                    Relude.show =<< BS.unpack (BS.take 4 chunk)
+                makePeerHost :: ByteString -> String
+                makePeerHost chunk = intercalate "." . map Relude.show $
+                    BS.unpack (BS.take 4 chunk)
                 makePeerPort chunk = 
                     -- this is safe because of when we call this
                     let [a, b] = BS.unpack (BS.drop 4 chunk)
