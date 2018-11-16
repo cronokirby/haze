@@ -24,6 +24,8 @@ module Haze.Tracker
     , Peer(..)
     , decodeAnnounce
     , announceFromHTTP
+    , ReqEvent(..)
+    , TrackerRequest(..)
     )
 where
 
