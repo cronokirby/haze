@@ -320,7 +320,7 @@ decodeAnnounce = Decoder doDecode
             bigA = fromIntegral a
             bigB :: Word16
             bigB = fromIntegral b
-        in bigB .|. (shift bigA 8)
+        in bigB .|. shift bigA 8
     makeChunks :: Int -> ByteString -> [ByteString]
     makeChunks size bs
         | BS.null bs = BS.take size bs : makeChunks size bs
