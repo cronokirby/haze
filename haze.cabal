@@ -18,7 +18,7 @@ tested-with:         GHC == 8.4.3
 
 source-repository head
   type:                git
-  location:            https://github.com/Lúcás Meier/haze.git
+  location:            https://github.com/cronokirby/haze.git
 
 library
   hs-source-dirs:      src
