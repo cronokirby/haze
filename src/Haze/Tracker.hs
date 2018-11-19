@@ -362,12 +362,7 @@ decodeAnnounce = Decoder doDecode
     binPeers _ = Nothing
     makeWord16 :: Word8 -> Word8 -> Word16
     makeWord16 a b = 
-        let 
-            bigA :: Word16
-            bigA = fromIntegral a
-            bigB :: Word16
-            bigB = fromIntegral b
-        in bigB .|. shift bigA 8
+        shift (fromIntegral a) 8 .|. fromIntegral b
     makeChunks :: Int -> ByteString -> [ByteString]
     makeChunks size bs
         | BS.null bs = []
