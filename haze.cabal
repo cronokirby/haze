@@ -25,6 +25,7 @@ library
   exposed-modules:     Haze
                        Haze.Bencoding
                        Haze.Client
+                       Haze.Peer
                        Haze.Tracker
   ghc-options:         -Wall
   build-depends:       base-noprelude       >= 4.11 && < 5
