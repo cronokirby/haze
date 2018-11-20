@@ -5,6 +5,7 @@ module Haze.Peer
     ( Block(..)
     , ExpectedBlocks
     , Message(..)
+    , encodeMessage
     , parseMessage
     )
 where
@@ -12,7 +13,8 @@ where
 import Relude
 
 import Data.Attoparsec.ByteString as AP
-import Data.Bits ((.|.), shift)
+import Data.Bits ((.&.), (.|.), shift, shiftR)
+import qualified Data.ByteString as BS
 import qualified Data.HashSet as HS
 import Network.Socket (PortNumber)
 
@@ -66,6 +68,32 @@ data Message
     | Port PortNumber
     deriving (Eq, Show)
 
+
+-- | Encodes a message as a bytestring, ready to send
+encodeMessage :: Message -> ByteString
+encodeMessage m = case m of
+    KeepAlive     -> BS.pack $ encInt 0
+    Choke         -> BS.pack $ encInt 1 ++ [0]
+    UnChoke       -> BS.pack $ encInt 1 ++ [1]
+    Interested    -> BS.pack $ encInt 1 ++ [2]
+    UnInterested  -> BS.pack $ encInt 1 ++ [3]
+    Have i        -> BS.pack $ encInt 5 ++ [4] ++ encInt i
+    Request a b c -> BS.pack $
+        encInt 13 ++ [6] ++ foldMap encInt [a, b, c]
+    RecvBlock a b block ->
+        let len = BS.length block
+        in BS.pack (encInt (len + 9) ++ [7] ++ encInt a ++ encInt b)
+           <> block
+    Cancel a b c  -> BS.pack $
+        encInt 13 ++ [8] ++ foldMap encInt [a, b, c]
+    Port p        -> BS.pack $
+        encInt 3 ++ [9] ++ encInt (fromInteger (toInteger p))
+  where
+    encInt :: Int -> [Word8]
+    encInt w = 
+        let push x acc = fromIntegral (x .&. 255) : acc
+            go _ (x, acc) = (shiftR x 8, push x acc)
+        in snd $ foldr go (w, []) [(), (), (), ()]
 
 
 {- | Parse a message encoded as as string of bytes
