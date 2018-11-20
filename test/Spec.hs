@@ -2,14 +2,13 @@ import Relude
 
 import Data.Attoparsec.ByteString (parseOnly)
 import qualified Data.HashMap.Strict as HM
-import qualified Data.HashSet as HS
 import Hedgehog
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Test.Hspec
 
 import Haze.Bencoding
-import Haze.Peer (Message(..), parseMessage)
+import Haze.Peer (BlockInfo(..), Message(..), parseMessage)
 
 
 main :: IO ()
@@ -72,13 +71,15 @@ messageSpec =
             shouldParse "\0\0\0\1\3" UnInterested
             shouldParse "\0\0\0\5\4\0\0\0\9" (Have 9)
             shouldParse "\0\0\0\13\6\0\0\0\9\0\0\0\9\0\0\0\9" $
-                Request 9 9 9
+                Request (BlockInfo 9 9 9)
             shouldParse "\0\0\0\13\8\0\0\0\9\0\0\0\9\0\0\0\9" $
-                Cancel 9 9 9
+                Cancel (BlockInfo 9 9 9)
             shouldParse "\0\0\0\3\9\1\0" (Port 256)
+            shouldParse "\0\0\0\10\7\0\0\0\9\0\0\0\9A" $
+                RecvBlock 9 9 "A"
   where
     shouldParse bs res = 
-        parseOnly (parseMessage HS.empty) bs 
+        parseOnly parseMessage bs
         `shouldBe` Right res
 
 

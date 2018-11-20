@@ -2,8 +2,7 @@
 Description: Contains types and functions related to peer communication.
 -}
 module Haze.Peer
-    ( Block(..)
-    , ExpectedBlocks
+    ( BlockInfo(..)
     , Message(..)
     , encodeMessage
     , parseMessage
@@ -15,25 +14,18 @@ import Relude
 import Data.Attoparsec.ByteString as AP
 import Data.Bits ((.&.), (.|.), shift, shiftR)
 import qualified Data.ByteString as BS
-import qualified Data.HashSet as HS
 import Network.Socket (PortNumber)
 
 
--- | Represents the information related to a block we can request
-data Block = Block
-    { blockIndex :: Int -- ^ The 0 based piece index of this block
-    , blockOffset :: Int -- ^ The 0 based bytes offset in the piece
-    , blockSize :: Int -- ^ The size of this block (bytes)
-    }
-    deriving (Eq)
+{- | Represents the information related to a block we can request
 
-instance Hashable Block where
-    hashWithSalt i (Block a b c) = hashWithSalt i [a, b, c]
+Contains index, offset, and block length.
+-}
+data BlockInfo = BlockInfo Int Int Int deriving (Eq, Show)
 
-
--- | Used to keep track of what blocks we expect to receive
-type ExpectedBlocks = HS.HashSet Block
-
+instance Hashable BlockInfo where
+    hashWithSalt i (BlockInfo a b c) = 
+        hashWithSalt i [a, b, c]
 
 
 -- | The messages sent between peers in a torrent
@@ -49,21 +41,21 @@ data Message
     -- | The sender is no longer interested in the receiver
     | UnInterested
     -- | The sender claims to have piece #index
-    | Have Int
+    | Have !Int
     {- | The sender is requesting a block in a certain piece.
 
     The first Int represents which piece is being asked for. The 2nd
     the zero base byte offset within the piece. And the 3rd the length.
     -}
-    | Request Int Int Int
+    | Request !BlockInfo
     {- | The sender is fulfilling a block request.
 
     The first 2 bytes represent the piece index and byte offset.
     The final part is the actual bytes constituting the block.
     -}
-    | RecvBlock Int Int ByteString
+    | RecvBlock !Int !Int !ByteString
     -- | The send is no longer requesting a block
-    | Cancel Int Int Int
+    | Cancel !BlockInfo
     -- | The port this peer's DHT is listening on
     | Port PortNumber
     deriving (Eq, Show)
@@ -78,14 +70,14 @@ encodeMessage m = case m of
     Interested    -> BS.pack $ encInt 1 ++ [2]
     UnInterested  -> BS.pack $ encInt 1 ++ [3]
     Have i        -> BS.pack $ encInt 5 ++ [4] ++ encInt i
-    Request a b c -> BS.pack $
-        encInt 13 ++ [6] ++ foldMap encInt [a, b, c]
+    Request block -> BS.pack $
+        encInt 13 ++ [6] ++ encBlock block
     RecvBlock a b block ->
         let len = BS.length block
         in BS.pack (encInt (len + 9) ++ [7] ++ encInt a ++ encInt b)
            <> block
-    Cancel a b c  -> BS.pack $
-        encInt 13 ++ [8] ++ foldMap encInt [a, b, c]
+    Cancel block  -> BS.pack $
+        encInt 13 ++ [8] ++ encBlock block
     Port p        -> BS.pack $
         encInt 3 ++ [9] ++ encInt (fromInteger (toInteger p))
   where
@@ -94,6 +86,8 @@ encodeMessage m = case m of
         let push x acc = fromIntegral (x .&. 255) : acc
             go _ (x, acc) = (shiftR x 8, push x acc)
         in snd $ foldr go (w, []) [(), (), (), ()]
+    encBlock :: BlockInfo -> [Word8]
+    encBlock (BlockInfo a b c) = foldMap encInt [a, b, c]
 
 
 {- | Parse a message encoded as as string of bytes
@@ -102,31 +96,30 @@ Takes the current size of the block we're expected to receive, if any.
 If no block is expected, but a Receive message is parsed, then this
 parser will fail.
 -}
-parseMessage :: ExpectedBlocks -> AP.Parser Message
-parseMessage blocks = do
+parseMessage :: AP.Parser Message
+parseMessage = do
     len <- parseInt
     if len == 0
         then return KeepAlive
-        else AP.anyWord8 >>= parseID blocks len
+        else AP.anyWord8 >>= parseID len
   where
-    parseID :: ExpectedBlocks -> Int -> Word8 -> AP.Parser Message
-    parseID _ 1  0 = return Choke
-    parseID _ 1  1 = return UnChoke
-    parseID _ 1  2 = return Interested 
-    parseID _ 1  3 = return UnInterested
-    parseID _ 5  4 = Have <$> parseInt
-    parseID _ 13 6 = Request <$> parseInt <*> parseInt <*> parseInt
-    parseID _ 13 8 = Cancel <$> parseInt <*> parseInt <*> parseInt
-    parseID _ 3  9 = Port <$> parsePort
-    parseID blocks' len 7 = do
+    parseID :: Int -> Word8 -> AP.Parser Message
+    parseID 1  0 = return Choke
+    parseID 1  1 = return UnChoke
+    parseID 1  2 = return Interested 
+    parseID 1  3 = return UnInterested
+    parseID 5  4 = Have <$> parseInt
+    parseID 13 6 = Request <$> 
+        (BlockInfo <$> parseInt <*> parseInt <*> parseInt)
+    parseID 13 8 = Cancel <$>
+        (BlockInfo <$> parseInt <*> parseInt <*> parseInt)
+    parseID 3  9 = Port <$> parsePort
+    parseID ln 7 = do
         index <- parseInt
         begin <- parseInt
-        let blockLen = len - 9
-            block = Block index begin blockLen
-        if HS.member block blocks'
-            then RecvBlock index begin <$> AP.take blockLen
-            else fail "Unrecognised block received"
-    parseID _ _  _ = fail "Unrecognised ID, or bad length"
+        let blockLen = ln - 9
+        RecvBlock index begin <$> AP.take blockLen
+    parseID  _  _ = fail "Unrecognised ID, or bad length"
 
 parseInt :: AP.Parser Int
 parseInt = do
