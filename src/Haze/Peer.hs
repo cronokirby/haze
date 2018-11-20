@@ -6,6 +6,7 @@ module Haze.Peer
     , Message(..)
     , encodeMessage
     , parseMessage
+    , parsePort
     )
 where
 
@@ -79,7 +80,7 @@ encodeMessage m = case m of
     Cancel block  -> BS.pack $
         encInt 13 ++ [8] ++ encBlock block
     Port p        -> BS.pack $
-        encInt 3 ++ [9] ++ encInt (fromInteger (toInteger p))
+        encInt 3 ++ [9] ++ drop 2 (encInt (fromIntegral p))
   where
     encInt :: Int -> [Word8]
     encInt w = 
