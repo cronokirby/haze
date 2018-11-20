@@ -111,9 +111,9 @@ parseMessage = do
     parseID 1  3 = return UnInterested
     parseID 5  4 = Have <$> parseInt
     parseID 13 6 = Request <$> 
-        (BlockInfo <$> parseInt <*> parseInt <*> parseInt)
+        liftA3 BlockInfo parseInt parseInt parseInt
     parseID 13 8 = Cancel <$>
-        (BlockInfo <$> parseInt <*> parseInt <*> parseInt)
+        liftA3 BlockInfo parseInt parseInt parseInt
     parseID 3  9 = Port <$> parsePort
     parseID ln 7 = do
         index <- parseInt

@@ -129,11 +129,11 @@ propMessage =
         , Port <$> Gen.integral_ (Range.linear 0 100)
         , Request <$> genBlockInfo
         , Cancel <$> genBlockInfo
-        , RecvBlock <$> genInt <*> genInt <*> genBS
+        , liftA3 RecvBlock genInt genInt genBS
         ]
     genInt :: MonadGen m => m Int
     genInt = Gen.int (Range.linear 0 100)
     genBS :: MonadGen m => m ByteString
     genBS = Gen.bytes (Range.linear 0 32)
     genBlockInfo :: MonadGen m => m BlockInfo
-    genBlockInfo = BlockInfo <$> genInt <*> genInt <*> genInt
+    genBlockInfo = liftA3 BlockInfo genInt genInt genInt
