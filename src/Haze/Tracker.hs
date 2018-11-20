@@ -353,7 +353,7 @@ decodeAnnounce = Decoder doDecode
                 makePeerPort chunk = 
                     -- this is safe because of when we call this
                     let [a, b] = BS.unpack (BS.drop 4 chunk)
-                    in fromInteger (toInteger (makeWord16 a b))
+                    in fromIntegral (makeWord16 a b)
             in Just $ map (\chunk -> 
                 Peer Nothing 
                 (makePeerHost chunk) 
