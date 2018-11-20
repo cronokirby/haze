@@ -61,6 +61,7 @@ test-suite darby-test
   ghc-options:       -threaded -rtsopts -with-rtsopts=-N
   build-depends:
                        base-noprelude       >= 4.11 && < 5
+                     , attoparsec           >= 0.13 && < 0.14
                      , bytestring           >= 0.10 && < 0.11
                      , haze
                      , hedgehog             >= 0.6  && < 0.7
