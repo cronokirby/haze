@@ -8,7 +8,7 @@ import qualified Hedgehog.Range as Range
 import Test.Hspec
 
 import Haze.Bencoding
-import Haze.Peer (BlockInfo(..), Message(..), parseMessage)
+import Haze.Peer (BlockInfo(..), Message(..), encodeMessage, parseMessage)
 
 
 main :: IO ()
@@ -85,12 +85,13 @@ messageSpec =
 
 propertyTests :: IO ()
 propertyTests = void $
-    checkParallel $ Group "Bencoding Properties" [
-        ("prop_encode_decode", propEncodeDecode)
-    ]
+    checkParallel $ Group "Bencoding Properties" 
+        [ ("prop_bencoding", propBencoding)
+        , ("prop_message", propMessage)
+        ]
 
-propEncodeDecode :: Property
-propEncodeDecode =
+propBencoding :: Property
+propBencoding =
     property $ do
         ben <- forAll genBencoding
         decode decodeBen (encode encodeBen ben) === Right ben
@@ -109,3 +110,30 @@ propEncodeDecode =
     genBMap = BMap . HM.fromList <$> Gen.list (Range.linear 0 32) pair
       where
         pair = (,) <$> Gen.bytes (Range.linear 0 10) <*> genBencoding
+
+
+propMessage :: Property
+propMessage =
+    property $ do
+        msg <- forAll genMessage
+        parseOnly parseMessage (encodeMessage msg) === Right msg
+  where
+    genMessage :: MonadGen m => m Message
+    genMessage = Gen.choice
+        [ return KeepAlive
+        , return Choke
+        , return UnChoke
+        , return Interested
+        , return UnInterested
+        , Have <$> genInt
+        , Port <$> Gen.integral_ (Range.linear 0 100)
+        , Request <$> genBlockInfo
+        , Cancel <$> genBlockInfo
+        , RecvBlock <$> genInt <*> genInt <*> genBS
+        ]
+    genInt :: MonadGen m => m Int
+    genInt = Gen.int (Range.linear 0 100)
+    genBS :: MonadGen m => m ByteString
+    genBS = Gen.bytes (Range.linear 0 32)
+    genBlockInfo :: MonadGen m => m BlockInfo
+    genBlockInfo = BlockInfo <$> genInt <*> genInt <*> genInt
