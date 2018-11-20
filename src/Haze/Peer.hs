@@ -64,6 +64,7 @@ data Message
     | Cancel Int Int Int
     -- | The port this peer's DHT is listening on
     | Port PortNumber
+    deriving (Eq, Show)
 
 
 
@@ -88,7 +89,7 @@ parseMessage blocks = do
     parseID _ 5  4 = Have <$> parseInt
     parseID _ 13 6 = Request <$> parseInt <*> parseInt <*> parseInt
     parseID _ 13 8 = Cancel <$> parseInt <*> parseInt <*> parseInt
-    parseID _ 3  9 = Port . fromInteger . toInteger <$> parseInt
+    parseID _ 3  9 = Port <$> parsePort
     parseID blocks' len 7 = do
         index <- parseInt
         begin <- parseInt
@@ -105,7 +106,16 @@ parseInt = do
     b2 <- AP.anyWord8 
     b3 <- AP.anyWord8
     b4 <- AP.anyWord8
-    return (makeWord32 [b1, b2, b3, b4])
+    return (makeWord32 [b4, b3, b2, b1])
   where
     makeWord32 :: [Word8] -> Int
     makeWord32 = foldr (\b acc -> shift acc 8 .|. fromIntegral b) 0
+
+parsePort :: AP.Parser PortNumber
+parsePort = do
+    a <- AP.anyWord8
+    b <- AP.anyWord8
+    return . fromInteger . makeWord16 $ [b, a]
+  where
+    makeWord16 :: [Word8] -> Integer
+    makeWord16 = foldr (\b acc -> shift acc 8 .|. fromIntegral b) 0

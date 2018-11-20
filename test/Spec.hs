@@ -1,17 +1,21 @@
 import Relude
 
+import Data.Attoparsec.ByteString (parseOnly)
 import qualified Data.HashMap.Strict as HM
+import qualified Data.HashSet as HS
 import Hedgehog
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Test.Hspec
 
 import Haze.Bencoding
+import Haze.Peer (Message(..), parseMessage)
 
 
 main :: IO ()
 main = do
     hspec bencodingSpec
+    hspec messageSpec
     propertyTests
 
 
@@ -57,6 +61,26 @@ bencodingSpec = do
     doEncode = encode encodeBen
     doDecode = decode decodeBen
 
+messageSpec :: SpecWith ()
+messageSpec =
+    describe "Peer.parseMessage" $
+        it "can decode basic messages" $ do
+            shouldParse "\0\0\0\0" KeepAlive
+            shouldParse "\0\0\0\1\0" Choke
+            shouldParse "\0\0\0\1\1" UnChoke
+            shouldParse "\0\0\0\1\2" Interested
+            shouldParse "\0\0\0\1\3" UnInterested
+            shouldParse "\0\0\0\5\4\0\0\0\9" (Have 9)
+            shouldParse "\0\0\0\13\6\0\0\0\9\0\0\0\9\0\0\0\9" $
+                Request 9 9 9
+            shouldParse "\0\0\0\13\8\0\0\0\9\0\0\0\9\0\0\0\9" $
+                Cancel 9 9 9
+            shouldParse "\0\0\0\3\9\1\0" (Port 256)
+  where
+    shouldParse bs res = 
+        parseOnly (parseMessage HS.empty) bs 
+        `shouldBe` Right res
+
 
 propertyTests :: IO ()
 propertyTests = void $
@@ -75,12 +99,12 @@ propEncodeDecode =
         [genBInt, genBString]
         [genBList, genBMap]
     genBInt :: MonadGen m => m Bencoding
-    genBInt = BInt <$> Gen.int64 (Range.linear (-1000) 1000)
+    genBInt = BInt <$> Gen.int64 (Range.linear (-100) 100)
     genBString :: MonadGen m => m Bencoding
     genBString = BString <$> Gen.bytes (Range.linear 0 100)
     genBList :: MonadGen m => m Bencoding
-    genBList = BList <$> Gen.list (Range.linear 0 64) genBencoding
+    genBList = BList <$> Gen.list (Range.linear 0 32) genBencoding
     genBMap :: MonadGen m => m Bencoding 
-    genBMap = BMap . HM.fromList <$> Gen.list (Range.linear 0 64) pair
+    genBMap = BMap . HM.fromList <$> Gen.list (Range.linear 0 32) pair
       where
         pair = (,) <$> Gen.bytes (Range.linear 0 10) <*> genBencoding
