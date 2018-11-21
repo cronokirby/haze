@@ -86,7 +86,6 @@ trackerFromURL t
         return (UDPTracker url (T.drop 1 port))
 
 
-
 {- | Represents a tiered list of objects.
 
 Every element in the tier is tried before moving on

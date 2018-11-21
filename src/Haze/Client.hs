@@ -110,4 +110,3 @@ parseFail parser bs =
     case AP.parseOnly parser bs of
         Left s  -> fail s
         Right a -> return a
-
