@@ -19,8 +19,14 @@ module Haze.Tracker
     , MetaInfo(..)
     , decodeMeta
     , metaFromBytes
+    , UDPConnection(..)
+    , parseUDPConn
+    , UDPTrackerRequest
+    , newUDPRequest
+    , encodeUDPRequest
     , Announce(..)
     , AnnounceInfo(..)
+    , parseUDPAnnounce
     , Peer(..)
     , decodeAnnounce
     , announceFromHTTP
@@ -34,10 +40,11 @@ where
 import Relude
 
 import Crypto.Hash.SHA1 as SHA1
-import Data.Bits ((.|.), shift)
+import qualified Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Text as T
 import Data.Time.Clock (UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Network.Socket (HostName, PortNumber)
@@ -45,10 +52,40 @@ import Text.Show (Show(..))
 
 import Haze.Bencoding (Bencoding(..), Decoder(..), DecodeError(..),
                        decode, encode, encodeBen)
+import Haze.Bits (Bits, encodeIntegralN, packBytes, parseInt)
 
 
--- | Represents the URL for a torrent Tracker
-newtype Tracker = Tracker Text deriving (Show)
+{- | Represents the URL for a torrent Tracker
+
+This distinguishes between the different types of
+supported clients. UDPTracker comes with a pre split
+link and port, ready for socket connection.
+-}
+data Tracker 
+    = HTTPTracker Text 
+    | UDPTracker Text Text
+    deriving (Show)
+
+
+{- | Try and get the type of tracker from a URL
+
+Makes a decision based on the presence of udp:// or
+http:// or https:// in the url. 
+Will fail completely if none of these is found.
+-}
+trackerFromURL :: Text -> Maybe Tracker
+trackerFromURL t
+    | T.isPrefixOf "udp://"   t = udpFromURL t
+    | T.isPrefixOf "http://"  t = Just (HTTPTracker t)
+    | T.isPrefixOf "https://" t = Just (HTTPTracker t)
+    | otherwise                 = Nothing
+  where
+    udpFromURL t' = do
+        unPrefix <- T.stripPrefix "udp://" t'
+        let (url, port) = T.span (/= ':') unPrefix
+        return (UDPTracker url (T.drop 1 port))
+
+
 
 {- | Represents a tiered list of objects.
 
@@ -105,7 +142,7 @@ data MetaInfo = MetaInfo
     , metaPrivate :: Bool
     , metaFile :: FileInfo
     , metaInfoHash :: SHA1
-    , metaAnnounce :: Text
+    , metaAnnounce :: Tracker
     , metaAnnounceList :: Maybe (TieredList Tracker)
     , metaCreation :: Maybe UTCTime
     , metaComment :: Maybe Text
@@ -138,7 +175,8 @@ decodeMeta = Decoder doDecode
         info <- HM.lookup "info" mp
         (metaPieces, metaPrivate, metaFile) <- getInfo info
         let metaInfoHash = SHA1 $ SHA1.hash (encode encodeBen info)
-        metaAnnounce     <- withKey "announce" mp tryText
+        announceURL     <- withKey "announce" mp tryText
+        metaAnnounce    <- trackerFromURL announceURL
         let metaAnnounceList = getAnnounces "announce-list" mp
         let metaCreation  = withKey "creation date" mp tryDate
         let metaComment   = withKey "comment" mp tryText
@@ -157,7 +195,7 @@ decodeMeta = Decoder doDecode
       where
         getTrackers :: Bencoding -> Maybe [Tracker]
         getTrackers = 
-            traverse (fmap Tracker . tryText) <=< tryList
+            traverse (trackerFromURL <=< tryText) <=< tryList
     tryDate :: Bencoding -> Maybe UTCTime
     tryDate (BInt i) = Just . posixSecondsToUTCTime $
             fromInteger (toInteger i)
@@ -261,6 +299,68 @@ trackerQuery TrackerRequest{..} = map (\(a, b) -> (a, Just b)) $
         ReqEmpty -> []
 
 
+{- | A UDP tracker will send this after a connection
+
+Contains a transaction ID and a connection ID
+-}
+data UDPConnection = UDPConnection ByteString ByteString
+
+parseUDPConn :: AP.Parser UDPConnection
+parseUDPConn = do
+    _     <- AP.string "\0\0\0\0"
+    trans <- AP.take 4
+    conn  <- AP.take 8
+    return (UDPConnection trans conn)
+
+-- | Represents a request to a UDP tracker
+data UDPTrackerRequest = 
+    UDPTrackerRequest ByteString TrackerRequest
+
+-- | Construct a new UDP request.
+newUDPRequest :: MetaInfo -> ByteString
+              -> UDPConnection -> UDPTrackerRequest
+newUDPRequest meta peerID (UDPConnection trans conn) =
+    let trackerReq = newTrackerRequest meta peerID
+        withTrans  = trackerReq { 
+            treqTransactionID = Just trans
+        }
+    in UDPTrackerRequest conn withTrans
+
+-- | Encodes a UDP request as a bytestring
+encodeUDPRequest :: UDPTrackerRequest -> ByteString
+encodeUDPRequest (UDPTrackerRequest conn TrackerRequest{..}) =
+    conn
+    <> "\0\0\0\1"
+    -- The upstream tracker won't like this
+    <> fromMaybe "\0\0\0\0" treqTransactionID
+    <> getSHA1 treqInfoHash
+    <> treqPeerID
+    <> pack64 treqDownloaded
+    <> pack64 treqLeft
+    <> pack64 treqUploaded
+    <> pack32 eventNum
+    -- The IP address we hardcode (default)
+    <> "\0\0\0\0"
+    -- This should be sufficiently unique
+    <> BS.drop 16 treqPeerID
+    <> pack32 (fromMaybe (-1) treqNumWant)
+    <> packPort treqPort
+  where
+    pack64 :: Int64 -> ByteString
+    pack64 = BS.pack . encodeIntegralN 8
+    pack32 :: (Bits i, Integral i) => i -> ByteString
+    pack32 = BS.pack . encodeIntegralN 4
+    packPort :: PortNumber -> ByteString
+    packPort p = 
+        BS.drop 2 (pack32 ((fromIntegral p) :: Int))
+    eventNum :: Int32
+    eventNum = case treqEvent of
+        ReqEmpty     -> 0
+        ReqCompleted -> 1
+        ReqStarted   -> 2
+        ReqStopped   -> 3
+
+
 -- | Represents the announce response from a tracker
 data Announce
     -- | The request to the tracker was bad
@@ -304,6 +404,48 @@ announceFromHTTP :: ByteString -> Either DecodeError Announce
 announceFromHTTP bs = decode decodeAnnounce bs
     >>= maybe (Left (DecodeError "Bad Announce Data")) Right
 
+
+-- | Decode a bytestring as a list of Peer addresses
+decodeBinaryPeers :: ByteString -> Maybe [Peer]
+decodeBinaryPeers bs
+    -- The bytestring isn't a multiple of 6
+    | BS.length bs `mod` 6 /= 0 = Nothing
+    | otherwise                 =
+        let chunks = makeChunks 6 bs
+            makePeerHost :: ByteString -> String
+            makePeerHost chunk = intercalate "." . map Relude.show $
+                BS.unpack (BS.take 4 chunk)
+            makePeerPort chunk = 
+                -- this is safe because of when we call this
+                packBytes (BS.unpack (BS.drop 4 chunk))
+        in Just $ map (\chunk -> 
+            Peer Nothing 
+            (makePeerHost chunk) 
+            (makePeerPort chunk))
+            chunks
+  where
+    makeChunks :: Int -> ByteString -> [ByteString]
+    makeChunks size body
+        | BS.null body = []
+        | otherwise    = BS.take size body
+                       : makeChunks size (BS.drop size body)
+
+-- | Parse Announce information from a UDP tracker
+parseUDPAnnounce :: AP.Parser Announce
+parseUDPAnnounce = do
+    _ <- AP.string "\0\0\0\1"
+    annTransactionID <- Just <$> AP.take 4
+    let annWarning = Nothing
+    annInterval <- parseInt
+    let annMinInterval = Nothing
+    annLeechers <- Just <$> parseInt
+    annSeeders  <- Just <$> parseInt
+    rest        <- AP.takeByteString
+    case decodeBinaryPeers rest of
+        Nothing -> fail "Failed to decode binary peers"
+        Just annPeers -> 
+            return (GoodAnnounce AnnounceInfo{..})
+
 -- | A Bencoding decoder for the Announce data
 decodeAnnounce :: Decoder (Maybe Announce)
 decodeAnnounce = Decoder doDecode
@@ -342,33 +484,8 @@ decodeAnnounce = Decoder doDecode
             return (Peer {..})
         getPeer _          = Nothing
     binPeers :: Bencoding -> Maybe [Peer]
-    binPeers (BString bs)
-        -- The bytestring isn't a multiple of 6
-        | BS.length bs `mod` 6 /= 0 = Nothing
-        | otherwise                 =
-            let chunks = makeChunks 6 bs
-                makePeerHost :: ByteString -> String
-                makePeerHost chunk = intercalate "." . map Relude.show $
-                    BS.unpack (BS.take 4 chunk)
-                makePeerPort chunk = 
-                    -- this is safe because of when we call this
-                    let [a, b] = BS.unpack (BS.drop 4 chunk)
-                    in fromIntegral (makeWord16 a b)
-            in Just $ map (\chunk -> 
-                Peer Nothing 
-                (makePeerHost chunk) 
-                (makePeerPort chunk))
-                chunks
-    binPeers _ = Nothing
-    makeWord16 :: Word8 -> Word8 -> Word16
-    makeWord16 a b = 
-        shift (fromIntegral a) 8 .|. fromIntegral b
-    makeChunks :: Int -> ByteString -> [ByteString]
-    makeChunks size bs
-        | BS.null bs = []
-        | otherwise  = BS.take size bs 
-                     : makeChunks size (BS.drop size bs)
-
+    binPeers (BString bs) = decodeBinaryPeers bs
+    binPeers _            = Nothing
 
 {- Decoding utilities -}
 

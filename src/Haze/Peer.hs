@@ -6,16 +6,16 @@ module Haze.Peer
     , Message(..)
     , encodeMessage
     , parseMessage
-    , parsePort
     )
 where
 
 import Relude
 
 import Data.Attoparsec.ByteString as AP
-import Data.Bits ((.&.), (.|.), shift, shiftR)
 import qualified Data.ByteString as BS
 import Network.Socket (PortNumber)
+
+import Haze.Bits (encodeIntegralN, parseInt, parse16)
 
 
 {- | Represents the information related to a block we can request
@@ -83,10 +83,7 @@ encodeMessage m = case m of
         encInt 3 ++ [9] ++ drop 2 (encInt (fromIntegral p))
   where
     encInt :: Int -> [Word8]
-    encInt w = 
-        let push x acc = fromIntegral (x .&. 255) : acc
-            go _ (x, acc) = (shiftR x 8, push x acc)
-        in snd $ foldr go (w, []) [(), (), (), ()]
+    encInt = encodeIntegralN 4
     encBlock :: BlockInfo -> [Word8]
     encBlock (BlockInfo a b c) = foldMap encInt [a, b, c]
 
@@ -114,30 +111,10 @@ parseMessage = do
         liftA3 BlockInfo parseInt parseInt parseInt
     parseID 13 8 = Cancel <$>
         liftA3 BlockInfo parseInt parseInt parseInt
-    parseID 3  9 = Port <$> parsePort
+    parseID 3  9 = Port <$> parse16
     parseID ln 7 = do
         index <- parseInt
         begin <- parseInt
         let blockLen = ln - 9
         RecvBlock index begin <$> AP.take blockLen
     parseID  _  _ = fail "Unrecognised ID, or bad length"
-
-parseInt :: AP.Parser Int
-parseInt = do
-    b1 <- AP.anyWord8
-    b2 <- AP.anyWord8 
-    b3 <- AP.anyWord8
-    b4 <- AP.anyWord8
-    return (makeWord32 [b4, b3, b2, b1])
-  where
-    makeWord32 :: [Word8] -> Int
-    makeWord32 = foldr (\b acc -> shift acc 8 .|. fromIntegral b) 0
-
-parsePort :: AP.Parser PortNumber
-parsePort = do
-    a <- AP.anyWord8
-    b <- AP.anyWord8
-    return . fromInteger . makeWord16 $ [b, a]
-  where
-    makeWord16 :: [Word8] -> Integer
-    makeWord16 = foldr (\b acc -> shift acc 8 .|. fromIntegral b) 0

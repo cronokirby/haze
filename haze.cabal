@@ -24,6 +24,7 @@ library
   hs-source-dirs:      src
   exposed-modules:     Haze
                        Haze.Bencoding
+                       Haze.Bits
                        Haze.Client
                        Haze.Peer
                        Haze.Tracker
