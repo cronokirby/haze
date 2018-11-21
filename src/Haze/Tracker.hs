@@ -95,7 +95,7 @@ the full file path, which must be respected.
 data FileItem = FileItem [FilePath] Int64 (Maybe MD5Sum) deriving (Show)
 
 {- | Represents the information in a .torrent file
-stem.Directory
+
 Contains information about the files contained in the
 torrent, and the trackers to use to connect to peers
 seeding those files.
