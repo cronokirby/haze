@@ -34,6 +34,7 @@ where
 import Relude
 
 import Crypto.Hash.SHA1 as SHA1
+import qualified Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.HashMap.Strict as HM
@@ -44,7 +45,7 @@ import Text.Show (Show(..))
 
 import Haze.Bencoding (Bencoding(..), Decoder(..), DecodeError(..),
                        decode, encode, encodeBen)
-import Haze.Bits (packBytes)
+import Haze.Bits (Bits, encodeIntegralN, packBytes)
 
 
 -- | Represents the URL for a torrent Tracker
@@ -267,6 +268,13 @@ Contains a transaction ID and a connection ID
 -}
 data UDPConnection = UDPConnection ByteString ByteString
 
+parseUDPConn :: AP.Parser UDPConnection
+parseUDPConn = do
+    _     <- AP.string "\0\0\0\0"
+    trans <- AP.take 4
+    conn  <- AP.take 8
+    return (UDPConnection trans conn)
+
 -- | Represents a request to a UDP tracker
 data UDPTrackerRequest = 
     UDPTrackerRequest ByteString TrackerRequest
@@ -280,6 +288,40 @@ newUDPRequest meta peerID (UDPConnection trans conn) =
             treqTransactionID = Just trans
         }
     in UDPTrackerRequest conn withTrans
+
+-- | Encodes a UDP request as a bytestring
+encodeUDPRequest :: UDPTrackerRequest -> ByteString
+encodeUDPRequest (UDPTrackerRequest conn (TrackerRequest{..})) =
+    conn
+    <> "\0\0\0\1"
+    -- The upstream tracker won't like this
+    <> fromMaybe "\0\0\0\0" treqTransactionID
+    <> getSHA1 treqInfoHash
+    <> treqPeerID
+    <> pack64 treqDownloaded
+    <> pack64 treqLeft
+    <> pack64 treqUploaded
+    <> pack32 eventNum
+    -- The IP address we hardcode (default)
+    <> "\0\0\0\0"
+    -- This should be sufficiently unique
+    <> BS.drop 16 treqPeerID
+    <> pack32 (fromMaybe (-1) treqNumWant)
+    <> packPort treqPort
+  where
+    pack64 :: Int64 -> ByteString
+    pack64 = BS.pack . encodeIntegralN 8
+    pack32 :: (Bits i, Integral i) => i -> ByteString
+    pack32 = BS.pack . encodeIntegralN 4
+    packPort :: PortNumber -> ByteString
+    packPort p = 
+        BS.drop 2 (pack32 ((fromIntegral p) :: Int))
+    eventNum :: Int32
+    eventNum = case treqEvent of
+        ReqEmpty     -> 0
+        ReqCompleted -> 1
+        ReqStarted   -> 2
+        ReqStopped   -> 3
 
 
 -- | Represents the announce response from a tracker

@@ -16,7 +16,7 @@ import Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import Network.Socket (PortNumber)
 
-import Haze.Bits (encodeIntegral, packBytes)
+import Haze.Bits (encodeIntegralN, packBytes)
 
 
 {- | Represents the information related to a block we can request
@@ -84,7 +84,7 @@ encodeMessage m = case m of
         encInt 3 ++ [9] ++ drop 2 (encInt (fromIntegral p))
   where
     encInt :: Int -> [Word8]
-    encInt = encodeIntegral
+    encInt = encodeIntegralN 4
     encBlock :: BlockInfo -> [Word8]
     encBlock (BlockInfo a b c) = foldMap encInt [a, b, c]
 
