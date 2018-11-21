@@ -19,8 +19,14 @@ module Haze.Tracker
     , MetaInfo(..)
     , decodeMeta
     , metaFromBytes
+    , UDPConnection(..)
+    , parseUDPConn
+    , UDPTrackerRequest
+    , newUDPRequest
+    , encodeUDPRequest
     , Announce(..)
     , AnnounceInfo(..)
+    , parseUDPAnnounce
     , Peer(..)
     , decodeAnnounce
     , announceFromHTTP
@@ -53,12 +59,14 @@ import Haze.Bits (Bits, encodeIntegralN, packBytes,
 {- | Represents the URL for a torrent Tracker
 
 This distinguishes between the different types of
-supported clients.
+supported clients. UDPTracker comes with a pre split
+link and port, ready for socket connection.
 -}
 data Tracker 
     = HTTPTracker Text 
-    | UDPTracker Text
+    | UDPTracker Text Text
     deriving (Show)
+
 
 {- | Try and get the type of tracker from a URL
 
@@ -68,10 +76,16 @@ Will fail completely if none of these is found.
 -}
 trackerFromURL :: Text -> Maybe Tracker
 trackerFromURL t
-    | T.isPrefixOf "udp://"   t = Just (UDPTracker t)
+    | T.isPrefixOf "udp://"   t = udpFromURL t
     | T.isPrefixOf "http://"  t = Just (HTTPTracker t)
     | T.isPrefixOf "https://" t = Just (HTTPTracker t)
     | otherwise                 = Nothing
+  where
+    udpFromURL t = do
+        unPrefix <- T.stripPrefix "udp://" t
+        let (url, port) = T.span (/= ':') unPrefix
+        return (UDPTracker url (T.drop 1 port))
+
 
 
 {- | Represents a tiered list of objects.
