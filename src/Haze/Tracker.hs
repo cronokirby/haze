@@ -34,7 +34,6 @@ where
 import Relude
 
 import Crypto.Hash.SHA1 as SHA1
-import Data.Bits ((.|.), shift)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.HashMap.Strict as HM
@@ -45,6 +44,7 @@ import Text.Show (Show(..))
 
 import Haze.Bencoding (Bencoding(..), Decoder(..), DecodeError(..),
                        decode, encode, encodeBen)
+import Haze.Bits (packBytes)
 
 
 -- | Represents the URL for a torrent Tracker
@@ -373,17 +373,13 @@ decodeAnnounce = Decoder doDecode
                     BS.unpack (BS.take 4 chunk)
                 makePeerPort chunk = 
                     -- this is safe because of when we call this
-                    let [a, b] = BS.unpack (BS.drop 4 chunk)
-                    in fromIntegral (makeWord16 a b)
+                    packBytes (BS.unpack (BS.drop 4 chunk))
             in Just $ map (\chunk -> 
                 Peer Nothing 
                 (makePeerHost chunk) 
                 (makePeerPort chunk))
                 chunks
     binPeers _ = Nothing
-    makeWord16 :: Word8 -> Word8 -> Word16
-    makeWord16 a b = 
-        shift (fromIntegral a) 8 .|. fromIntegral b
     makeChunks :: Int -> ByteString -> [ByteString]
     makeChunks size bs
         | BS.null bs = []

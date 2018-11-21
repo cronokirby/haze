@@ -13,9 +13,10 @@ where
 import Relude
 
 import Data.Attoparsec.ByteString as AP
-import Data.Bits ((.&.), (.|.), shift, shiftR)
 import qualified Data.ByteString as BS
 import Network.Socket (PortNumber)
+
+import Haze.Bits (encodeIntegral, packBytes)
 
 
 {- | Represents the information related to a block we can request
@@ -83,10 +84,7 @@ encodeMessage m = case m of
         encInt 3 ++ [9] ++ drop 2 (encInt (fromIntegral p))
   where
     encInt :: Int -> [Word8]
-    encInt w = 
-        let push x acc = fromIntegral (x .&. 255) : acc
-            go _ (x, acc) = (shiftR x 8, push x acc)
-        in snd $ foldr go (w, []) [(), (), (), ()]
+    encInt = encodeIntegral
     encBlock :: BlockInfo -> [Word8]
     encBlock (BlockInfo a b c) = foldMap encInt [a, b, c]
 
@@ -128,16 +126,10 @@ parseInt = do
     b2 <- AP.anyWord8 
     b3 <- AP.anyWord8
     b4 <- AP.anyWord8
-    return (makeWord32 [b4, b3, b2, b1])
-  where
-    makeWord32 :: [Word8] -> Int
-    makeWord32 = foldr (\b acc -> shift acc 8 .|. fromIntegral b) 0
+    return $ packBytes [b1, b2, b3, b4]
 
 parsePort :: AP.Parser PortNumber
 parsePort = do
     a <- AP.anyWord8
     b <- AP.anyWord8
-    return . fromInteger . makeWord16 $ [b, a]
-  where
-    makeWord16 :: [Word8] -> Integer
-    makeWord16 = foldr (\b acc -> shift acc 8 .|. fromIntegral b) 0
+    return $ packBytes [a, b]
