@@ -6,7 +6,6 @@ module Haze.Peer
     , Message(..)
     , encodeMessage
     , parseMessage
-    , parsePort
     )
 where
 
@@ -16,7 +15,7 @@ import Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import Network.Socket (PortNumber)
 
-import Haze.Bits (encodeIntegralN, packBytes)
+import Haze.Bits (encodeIntegralN, packBytes, parseInt, parse16)
 
 
 {- | Represents the information related to a block we can request
@@ -112,24 +111,10 @@ parseMessage = do
         liftA3 BlockInfo parseInt parseInt parseInt
     parseID 13 8 = Cancel <$>
         liftA3 BlockInfo parseInt parseInt parseInt
-    parseID 3  9 = Port <$> parsePort
+    parseID 3  9 = Port <$> parse16
     parseID ln 7 = do
         index <- parseInt
         begin <- parseInt
         let blockLen = ln - 9
         RecvBlock index begin <$> AP.take blockLen
     parseID  _  _ = fail "Unrecognised ID, or bad length"
-
-parseInt :: AP.Parser Int
-parseInt = do
-    b1 <- AP.anyWord8
-    b2 <- AP.anyWord8 
-    b3 <- AP.anyWord8
-    b4 <- AP.anyWord8
-    return $ packBytes [b1, b2, b3, b4]
-
-parsePort :: AP.Parser PortNumber
-parsePort = do
-    a <- AP.anyWord8
-    b <- AP.anyWord8
-    return $ packBytes [a, b]

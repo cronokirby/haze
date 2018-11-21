@@ -45,7 +45,8 @@ import Text.Show (Show(..))
 
 import Haze.Bencoding (Bencoding(..), Decoder(..), DecodeError(..),
                        decode, encode, encodeBen)
-import Haze.Bits (Bits, encodeIntegralN, packBytes)
+import Haze.Bits (Bits, encodeIntegralN, packBytes,
+                  parseInt, parse16)
 
 
 -- | Represents the URL for a torrent Tracker
@@ -367,6 +368,47 @@ announceFromHTTP :: ByteString -> Either DecodeError Announce
 announceFromHTTP bs = decode decodeAnnounce bs
     >>= maybe (Left (DecodeError "Bad Announce Data")) Right
 
+
+-- | Decode a bytestring as a list of Peer addresses
+decodeBinaryPeers :: ByteString -> Maybe [Peer]
+decodeBinaryPeers bs
+    -- The bytestring isn't a multiple of 6
+    | BS.length bs `mod` 6 /= 0 = Nothing
+    | otherwise                 =
+        let chunks = makeChunks 6 bs
+            makePeerHost :: ByteString -> String
+            makePeerHost chunk = intercalate "." . map Relude.show $
+                BS.unpack (BS.take 4 chunk)
+            makePeerPort chunk = 
+                -- this is safe because of when we call this
+                packBytes (BS.unpack (BS.drop 4 chunk))
+        in Just $ map (\chunk -> 
+            Peer Nothing 
+            (makePeerHost chunk) 
+            (makePeerPort chunk))
+            chunks
+  where
+    makeChunks :: Int -> ByteString -> [ByteString]
+    makeChunks size bs
+        | BS.null bs = []
+        | otherwise  = BS.take size bs 
+                     : makeChunks size (BS.drop size bs)
+
+-- | Parse Announce information from a UDP tracker
+parseUDPAnnounce :: AP.Parser Announce
+parseUDPAnnounce = do
+    _ <- AP.string "\0\0\0\1"
+    let annWarning = Nothing
+    annInterval <- parseInt
+    let annMinInterval = Nothing
+    annLeechers <- Just <$> parseInt
+    annSeeders  <- Just <$> parseInt
+    rest        <- AP.takeByteString
+    case decodeBinaryPeers rest of
+        Nothing -> fail "Failed to decode binary peers"
+        Just annPeers -> 
+            return (GoodAnnounce AnnounceInfo{..})
+
 -- | A Bencoding decoder for the Announce data
 decodeAnnounce :: Decoder (Maybe Announce)
 decodeAnnounce = Decoder doDecode
@@ -405,29 +447,8 @@ decodeAnnounce = Decoder doDecode
             return (Peer {..})
         getPeer _          = Nothing
     binPeers :: Bencoding -> Maybe [Peer]
-    binPeers (BString bs)
-        -- The bytestring isn't a multiple of 6
-        | BS.length bs `mod` 6 /= 0 = Nothing
-        | otherwise                 =
-            let chunks = makeChunks 6 bs
-                makePeerHost :: ByteString -> String
-                makePeerHost chunk = intercalate "." . map Relude.show $
-                    BS.unpack (BS.take 4 chunk)
-                makePeerPort chunk = 
-                    -- this is safe because of when we call this
-                    packBytes (BS.unpack (BS.drop 4 chunk))
-            in Just $ map (\chunk -> 
-                Peer Nothing 
-                (makePeerHost chunk) 
-                (makePeerPort chunk))
-                chunks
-    binPeers _ = Nothing
-    makeChunks :: Int -> ByteString -> [ByteString]
-    makeChunks size bs
-        | BS.null bs = []
-        | otherwise  = BS.take size bs 
-                     : makeChunks size (BS.drop size bs)
-
+    binPeers (BString bs) = decodeBinaryPeers bs
+    binPeers _            = Nothing
 
 {- Decoding utilities -}
 

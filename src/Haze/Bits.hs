@@ -5,11 +5,14 @@ module Haze.Bits
     ( Bits
     , encodeIntegralN
     , packBytes
+    , parseInt
+    , parse16
     )
 where
 
 import Relude
 
+import qualified Data.Attoparsec.ByteString as AP
 import Data.Bits (Bits, (.|.), (.&.), shiftL, shiftR)
 
 
@@ -29,3 +32,21 @@ packBytes =
   where
     go :: Word8 -> Int -> Int
     go b acc = shiftL acc 8 .|. fromIntegral b
+
+
+-- | Parse 4 big endian bytes as an Int
+parseInt :: AP.Parser Int
+parseInt = do
+    b1 <- AP.anyWord8
+    b2 <- AP.anyWord8 
+    b3 <- AP.anyWord8
+    b4 <- AP.anyWord8
+    return $ packBytes [b1, b2, b3, b4]
+
+-- | Parse 2 big endian bytes as a Number
+parse16 :: Num n => AP.Parser n
+parse16 = do
+    a <- AP.anyWord8
+    b <- AP.anyWord8
+    return $ packBytes [a, b]
+
