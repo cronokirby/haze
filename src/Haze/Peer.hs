@@ -15,7 +15,7 @@ import Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import Network.Socket (PortNumber)
 
-import Haze.Bits (encodeIntegralN, packBytes, parseInt, parse16)
+import Haze.Bits (encodeIntegralN, parseInt, parse16)
 
 
 {- | Represents the information related to a block we can request

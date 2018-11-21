@@ -52,8 +52,7 @@ import Text.Show (Show(..))
 
 import Haze.Bencoding (Bencoding(..), Decoder(..), DecodeError(..),
                        decode, encode, encodeBen)
-import Haze.Bits (Bits, encodeIntegralN, packBytes,
-                  parseInt, parse16)
+import Haze.Bits (Bits, encodeIntegralN, packBytes, parseInt)
 
 
 {- | Represents the URL for a torrent Tracker
@@ -81,8 +80,8 @@ trackerFromURL t
     | T.isPrefixOf "https://" t = Just (HTTPTracker t)
     | otherwise                 = Nothing
   where
-    udpFromURL t = do
-        unPrefix <- T.stripPrefix "udp://" t
+    udpFromURL t' = do
+        unPrefix <- T.stripPrefix "udp://" t'
         let (url, port) = T.span (/= ':') unPrefix
         return (UDPTracker url (T.drop 1 port))
 
@@ -329,7 +328,7 @@ newUDPRequest meta peerID (UDPConnection trans conn) =
 
 -- | Encodes a UDP request as a bytestring
 encodeUDPRequest :: UDPTrackerRequest -> ByteString
-encodeUDPRequest (UDPTrackerRequest conn (TrackerRequest{..})) =
+encodeUDPRequest (UDPTrackerRequest conn TrackerRequest{..}) =
     conn
     <> "\0\0\0\1"
     -- The upstream tracker won't like this
@@ -426,15 +425,16 @@ decodeBinaryPeers bs
             chunks
   where
     makeChunks :: Int -> ByteString -> [ByteString]
-    makeChunks size bs
-        | BS.null bs = []
-        | otherwise  = BS.take size bs 
-                     : makeChunks size (BS.drop size bs)
+    makeChunks size body
+        | BS.null body = []
+        | otherwise    = BS.take size body
+                       : makeChunks size (BS.drop size body)
 
 -- | Parse Announce information from a UDP tracker
 parseUDPAnnounce :: AP.Parser Announce
 parseUDPAnnounce = do
     _ <- AP.string "\0\0\0\1"
+    annTransactionID <- Just <$> AP.take 4
     let annWarning = Nothing
     annInterval <- parseInt
     let annMinInterval = Nothing

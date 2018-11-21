@@ -11,19 +11,21 @@ where
 
 import Relude
 
+import Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Time.Clock (getCurrentTime, utctDayTime)
 import Network.HTTP.Client
 import qualified Network.Socket as Sock
-import Network.Socket.ByteString (sendTo, sendAllTo, recv)
+import Network.Socket.ByteString (sendAllTo, recv)
 
 
 import Haze.Bencoding (DecodeError(..))
-import Haze.Bits (encodeIntegralN)
 import Haze.Tracker (Tracker(..), MetaInfo(..), metaFromBytes,
                      newTrackerRequest, 
-                     trackerQuery, announceFromHTTP)
+                     trackerQuery, announceFromHTTP,
+                     parseUDPConn, parseUDPAnnounce,
+                     newUDPRequest, encodeUDPRequest)
 
 
 {- | Generates a peer id from scratch.
@@ -54,17 +56,17 @@ launchClient file = do
 
 launchTorrent :: MetaInfo -> IO ()
 launchTorrent torrent = do
+    peerID <- generatePeerID
     case metaAnnounce torrent of
-        HTTPTracker url -> connectHTTP torrent url
-        UDPTracker url port -> 
+        HTTPTracker url -> connectHTTP peerID torrent url
+        UDPTracker url prt -> 
             Sock.withSocketsDo $
-            connectUDP torrent url port
+            connectUDP peerID torrent url prt
 
-connectHTTP :: MetaInfo -> Text -> IO ()
-connectHTTP torrent url = do
+connectHTTP :: ByteString -> MetaInfo -> Text -> IO ()
+connectHTTP peerID torrent url = do
     mgr <- newManager defaultManagerSettings
     request <- parseRequest (toString url)
-    peerID <- generatePeerID
     let trackerReq = newTrackerRequest torrent peerID
         query = trackerQuery trackerReq
     let withQuery = setQueryString query request
@@ -75,27 +77,37 @@ connectHTTP torrent url = do
 
 
 -- | Connect to a UDP tracker with url and port
-connectUDP :: MetaInfo -> Text -> Text -> IO ()
-connectUDP torrent url port = do
-    putTextLn (url <> ":" <> port)
-    let urlS = toString url
-        portS = toString port
+connectUDP :: ByteString -> MetaInfo -> Text -> Text -> IO ()
+connectUDP peerID torrent url prt = do
+    let urlS =  toString url
+        portS = toString prt
         hints = Just Sock.defaultHints
-            { Sock.addrSocketType = Sock.Datagram }
-    target:_ <- Sock.getAddrInfo Nothing (Just urlS) (Just portS)
+            { Sock.addrSocketType = Sock.Datagram 
+            }
+    target:_ <- Sock.getAddrInfo hints (Just urlS) (Just portS)
     let fam  = Sock.addrFamily target
-        addr = (Sock.addrAddress target)
+        addr = Sock.addrAddress target
     sock <- Sock.socket fam Sock.Datagram Sock.defaultProtocol
-    connect sock addr
-    data1 <- recv sock 1024
-    putBSLn data1
+    initiate sock addr
+    connBytes <- recv sock 1024
+    connInfo <- parseFail parseUDPConn connBytes
+    let request = newUDPRequest torrent peerID connInfo
+    sendAllTo sock (encodeUDPRequest request) addr
+    annBytes <- recv sock 1024
+    announce <- parseFail parseUDPAnnounce annBytes
+    print announce
   where
-    connect :: Sock.Socket -> Sock.SockAddr -> IO ()
-    connect sock addr = do
-        sendAllTo sock bytes addr
-      where
-        magic :: Int64 
-        magic = 4497486125440
-        bytes = BS.pack (encodeIntegralN 8 magic)
-             <> "\0\0\0\0"
-             <> "\20\34\34\100"
+    initiate :: Sock.Socket -> Sock.SockAddr -> IO ()
+    initiate sock = sendAllTo sock $
+           "\0\0\4\x17\x27\x10\x19\x80"
+        <> "\0\0\0\0"
+        -- This should be sufficiently unique between clients
+        <> BS.drop 16 peerID
+
+
+parseFail :: MonadFail m => AP.Parser a -> ByteString -> m a
+parseFail parser bs =
+    case AP.parseOnly parser bs of
+        Left s  -> fail s
+        Right a -> return a
+
