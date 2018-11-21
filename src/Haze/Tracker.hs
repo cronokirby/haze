@@ -261,6 +261,27 @@ trackerQuery TrackerRequest{..} = map (\(a, b) -> (a, Just b)) $
         ReqEmpty -> []
 
 
+{- | A UDP tracker will send this after a connection
+
+Contains a transaction ID and a connection ID
+-}
+data UDPConnection = UDPConnection ByteString ByteString
+
+-- | Represents a request to a UDP tracker
+data UDPTrackerRequest = 
+    UDPTrackerRequest ByteString TrackerRequest
+
+-- | Construct a new UDP request.
+newUDPRequest :: MetaInfo -> ByteString
+              -> UDPConnection -> UDPTrackerRequest
+newUDPRequest meta peerID (UDPConnection trans conn) =
+    let trackerReq = newTrackerRequest meta peerID
+        withTrans  = trackerReq { 
+            treqTransactionID = Just trans
+        }
+    in UDPTrackerRequest conn withTrans
+
+
 -- | Represents the announce response from a tracker
 data Announce
     -- | The request to the tracker was bad
