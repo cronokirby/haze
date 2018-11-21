@@ -17,8 +17,9 @@ import Data.Time.Clock (getCurrentTime, utctDayTime)
 import Network.HTTP.Client
 
 import Haze.Bencoding (DecodeError(..))
-import Haze.Tracker (MetaInfo(..), metaFromBytes, newTrackerRequest, 
-                    trackerQuery, announceFromHTTP)
+import Haze.Tracker (Tracker(..), MetaInfo(..), metaFromBytes,
+                     newTrackerRequest, 
+                     trackerQuery, announceFromHTTP)
 
 
 {- | Generates a peer id from scratch.
@@ -49,8 +50,15 @@ launchClient file = do
 
 launchTorrent :: MetaInfo -> IO ()
 launchTorrent torrent = do
+    case metaAnnounce torrent of
+        HTTPTracker url -> launchHTTP torrent url
+        UDPTracker  _   -> 
+            putTextLn "UDP Trackers not supported"
+
+launchHTTP :: MetaInfo -> Text -> IO ()
+launchHTTP torrent url = do
     mgr <- newManager defaultManagerSettings
-    request <- parseRequest (toString (metaAnnounce torrent))
+    request <- parseRequest (toString url)
     peerID <- generatePeerID
     let trackerReq = newTrackerRequest torrent peerID
         query = trackerQuery trackerReq

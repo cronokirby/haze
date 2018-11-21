@@ -38,6 +38,7 @@ import qualified Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Text as T
 import Data.Time.Clock (UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Network.Socket (HostName, PortNumber)
@@ -49,8 +50,29 @@ import Haze.Bits (Bits, encodeIntegralN, packBytes,
                   parseInt, parse16)
 
 
--- | Represents the URL for a torrent Tracker
-newtype Tracker = Tracker Text deriving (Show)
+{- | Represents the URL for a torrent Tracker
+
+This distinguishes between the different types of
+supported clients.
+-}
+data Tracker 
+    = HTTPTracker Text 
+    | UDPTracker Text
+    deriving (Show)
+
+{- | Try and get the type of tracker from a URL
+
+Makes a decision based on the presence of udp:// or
+http:// or https:// in the url. 
+Will fail completely if none of these is found.
+-}
+trackerFromURL :: Text -> Maybe Tracker
+trackerFromURL t
+    | T.isPrefixOf "udp://"   t = Just (UDPTracker t)
+    | T.isPrefixOf "http://"  t = Just (HTTPTracker t)
+    | T.isPrefixOf "https://" t = Just (HTTPTracker t)
+    | otherwise                 = Nothing
+
 
 {- | Represents a tiered list of objects.
 
@@ -107,7 +129,7 @@ data MetaInfo = MetaInfo
     , metaPrivate :: Bool
     , metaFile :: FileInfo
     , metaInfoHash :: SHA1
-    , metaAnnounce :: Text
+    , metaAnnounce :: Tracker
     , metaAnnounceList :: Maybe (TieredList Tracker)
     , metaCreation :: Maybe UTCTime
     , metaComment :: Maybe Text
@@ -140,7 +162,8 @@ decodeMeta = Decoder doDecode
         info <- HM.lookup "info" mp
         (metaPieces, metaPrivate, metaFile) <- getInfo info
         let metaInfoHash = SHA1 $ SHA1.hash (encode encodeBen info)
-        metaAnnounce     <- withKey "announce" mp tryText
+        announceURL     <- withKey "announce" mp tryText
+        metaAnnounce    <- trackerFromURL announceURL
         let metaAnnounceList = getAnnounces "announce-list" mp
         let metaCreation  = withKey "creation date" mp tryDate
         let metaComment   = withKey "comment" mp tryText
@@ -159,7 +182,7 @@ decodeMeta = Decoder doDecode
       where
         getTrackers :: Bencoding -> Maybe [Tracker]
         getTrackers = 
-            traverse (fmap Tracker . tryText) <=< tryList
+            traverse (trackerFromURL <=< tryText) <=< tryList
     tryDate :: Bencoding -> Maybe UTCTime
     tryDate (BInt i) = Just . posixSecondsToUTCTime $
             fromInteger (toInteger i)
