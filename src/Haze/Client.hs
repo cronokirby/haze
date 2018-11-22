@@ -14,7 +14,7 @@ where
 import Relude
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (Async, async, cancel, link, race)
+import Control.Concurrent.Async (async, link, race)
 import Control.Exception.Safe (
     MonadThrow, MonadCatch, MonadMask,
     Exception, bracket, throw)
@@ -28,14 +28,13 @@ import Network.Socket.ByteString (sendAllTo, recv)
 
 
 import Data.TieredList (TieredList, popTiered)
-import Haze.Bencoding (DecodeError(..), decode, decodeBen)
+import Haze.Bencoding (DecodeError(..))
 import Haze.Tracker (
     Tracker(..), MetaInfo(..), Announce(..), AnnounceInfo(..), 
     UDPTrackerRequest, squashedTrackers, updateTransactionID,
     metaFromBytes, newTrackerRequest, trackerQuery,
     announceFromHTTP, parseUDPConn, parseUDPAnnounce,
-    newUDPRequest, encodeUDPRequest, updateUDPTransID,
-    updateUDPConnID)
+    newUDPRequest, encodeUDPRequest, updateUDPTransID)
 
 
 {- | Generates a peer id from scratch.
@@ -68,8 +67,11 @@ launchClient file = do
 
 -- | Represents the exceptions that can get thrown from a connection
 data BadAnnounceException 
+    -- | We couldn't parse a tracker response
     = BadParse Text 
+    -- | The announce had a warning
     | BadAnnounce Text
+    -- | The transaction ID was mismatched
     | BadTransaction
     deriving (Show)
 instance Exception BadAnnounceException
@@ -161,44 +163,37 @@ launchTorrent = do
                 ScoutTimedOut -> do
                     putTextLn "No response after 1s"
                     loop connInfo
-                ScoutSuccessful info -> do
+                ScoutSuccessful info ->
                     print info
-                ScoutUnkownTracker t -> do
+                ScoutUnkownTracker _ ->
                     putTextLn "Skipping unkown tracker"
     tryTracker :: ConnInfo -> Tracker -> ClientM ScoutResult
     tryTracker connInfo tracker = do
         putTextLn ("Trying: " <> show tracker)
-        let action = case tracker of
-                HTTPTracker url -> 
-                    Right . launchAsync . runConnWith connInfo $
-                    connectHTTP url
-                UDPTracker url prt -> 
-                    Right . launchAsync . Sock.withSocketsDo . runConnWith connInfo $
-                    connectUDP url prt
-                UnknownTracker t ->
-                    Left (ScoutUnkownTracker t)
-        case action of
-            Right thread -> do
-                threadID <- thread
-                mvar <- asks clientMsg
-                res <- liftIO $ race (read mvar threadID) timeOut
-                return (either id id res)
-            Left res -> return res
-    read :: MVar AnnounceInfo -> Async () -> IO ScoutResult
-    read mvar thread = do
-        ann <- takeMVar mvar
-        return (ScoutSuccessful info)
+        case tracker of
+            HTTPTracker url -> 
+                launchConn  . runConnWith connInfo $
+                connectHTTP url
+            UDPTracker url prt -> 
+                launchConn . Sock.withSocketsDo . runConnWith connInfo $
+                connectUDP url prt
+            UnknownTracker t ->
+                return (ScoutUnkownTracker t)
+    noTrackers :: MonadIO m => m ()
+    noTrackers = putTextLn "No more trackers left to try :("
+    launchConn :: IO () -> ClientM ScoutResult
+    launchConn action = do
+        liftIO $ async action >>= link
+        mvar <- asks clientMsg
+        res <- liftIO $ race (read mvar) timeOut
+        return (either id id res)
+    read :: MVar AnnounceInfo -> IO ScoutResult
+    read mvar = ScoutSuccessful <$> takeMVar mvar
     timeOut :: IO ScoutResult
     timeOut = do
         threadDelay 1000000
         return ScoutTimedOut
-    noTrackers :: MonadIO m => m ()
-    noTrackers = putTextLn "No more trackers left to try :("
-    launchAsync :: MonadIO m => IO () -> m (Async ())
-    launchAsync m = liftIO $ do
-        a <- async m
-        link a
-        return a
+        
 
 
 -- | The information a connection to a tracker needs
@@ -225,9 +220,7 @@ Since bad announces are usually our fault, we want
 to throw an exception
 -}
 putAnnounce :: AnnounceInfo -> ConnM ()
-putAnnounce info = do
-    mvar <- asks connMsg
-    putMVar mvar info
+putAnnounce info = asks connMsg >>= (`putMVar` info)
 
 
 connectHTTP :: Text -> ConnM ()
@@ -242,52 +235,46 @@ connectHTTP url = do
             withQuery = setQueryString query req
         response <- liftIO $ httpLbs withQuery mgr
         let bytes = LBS.toStrict $ responseBody response
-            fullAnnounce = announceFromHTTP bytes
+        fullAnnounce <- case announceFromHTTP bytes of
+                Left (DecodeError err) -> throw (BadParse err)
+                Right announce -> return announce
         info <- getAnnInfo fullAnnounce
         putAnnounce info
-        let newTReq = updateReq trackerReq fullAnnounce
-            time = (1000000 *) . fromRight 15 $ fmap annInterval info
+        let newTReq = updateReq trackerReq info
+            time = 1000000 * annInterval info
         liftIO $ threadDelay time
         loop mgr req newTReq
-    makeTrackerError (Left (DecodeError err)) = Left (TrackerParseErr err)
-    makeTrackerError (Right x)                = Right x
-    updateReq treq (Right (GoodAnnounce info)) =
+    updateReq treq info =
         updateTransactionID (annTransactionID info) treq
-    updateReq treq _    = treq
 
 
 -- | Represents a UDP connection to some tracker
 data UDPSocket = UDPSocket Sock.Socket Sock.SockAddr
 
-
 -- | Connect to a UDP tracker with url and port
 connectUDP :: Text -> Text -> ConnM ()
 connectUDP url' prt' = do
     ConnInfo{..} <- ask
-    bracket (makeUDPSocket url' prt') closeUDPSocket $ \udp -> do
+    void . bracket (makeUDPSocket url' prt') closeUDPSocket $ \udp -> do
         initiate connPeerID udp
         connBytes <- recvUDP udp 1024
-        request <- runExceptT $ do
-            connInfo <- parseFail parseUDPConn connBytes
-            return $ newUDPRequest connTorrent connPeerID connInfo
-        case request of
-            Left _    -> throw (BadParse "badannounce")
-            Right req -> loop udp req
-    return () -- this seems to be necessary to force evaluation...
+        conn <- parseFail parseUDPConn connBytes
+        let request = newUDPRequest connTorrent connPeerID conn
+        loop udp request
   where
     loop udp request = do
         sendUDP udp (encodeUDPRequest request)
         annBytes <- recvUDP udp 1024
         announce <- parseFail parseUDPAnnounce annBytes
-        info <- annConnMsg announce
+        info <- getAnnInfo announce
         putAnnounce info
         let newReq = updateReq info request
-            time = (* 1000000) . fromRight 15 $ fmap annInterval info
+            time = 1000000 * annInterval info
         liftIO $ threadDelay time
         loop udp newReq
     updateReq :: AnnounceInfo -> UDPTrackerRequest -> UDPTrackerRequest
     updateReq info req = maybe req
-        (\transID -> updateUDPTransID transID req)
+        (`updateUDPTransID` req)
         (annTransactionID info)
     makeUDPSocket :: MonadIO m => Text -> Text -> m UDPSocket
     makeUDPSocket url prt = liftIO $ do
