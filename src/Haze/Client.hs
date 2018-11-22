@@ -153,20 +153,27 @@ launchTorrent = do
     peerID <- generatePeerID
     ClientInfo{..} <- ask
     let connInfo = ConnInfo peerID clientTorrent clientMsg
-    loop connInfo
+    scoutTrackers connInfo
   where
-    loop connInfo = do
+    scoutTrackers connInfo = do
         next <- popTracker
         ($ next) . maybe noTrackers $ \tracker -> do
             r <- tryTracker connInfo tracker
             case r of
                 ScoutTimedOut -> do
                     putTextLn "No response after 1s"
-                    loop connInfo
-                ScoutSuccessful info ->
+                    scoutTrackers connInfo
+                ScoutSuccessful info -> do
                     print info
-                ScoutUnkownTracker _ ->
+                    settle
+                ScoutUnkownTracker _ -> do
                     putTextLn "Skipping unkown tracker"
+                    scoutTrackers connInfo
+    settle :: ClientM ()
+    settle = forever $ do
+        mvar <- asks clientMsg
+        info <- liftIO $ readMVar mvar
+        print info
     tryTracker :: ConnInfo -> Tracker -> ClientM ScoutResult
     tryTracker connInfo tracker = do
         putTextLn ("Trying: " <> show tracker)
@@ -193,7 +200,6 @@ launchTorrent = do
     timeOut = do
         threadDelay 1000000
         return ScoutTimedOut
-        
 
 
 -- | The information a connection to a tracker needs
