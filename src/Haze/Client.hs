@@ -14,7 +14,7 @@ where
 import Relude
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (Async, async, cancel, link)
+import Control.Concurrent.Async (Async, async, cancel, link, race)
 import Control.Exception.Safe (
     MonadThrow, MonadCatch, MonadMask,
     Exception, bracket, throw)
@@ -136,16 +136,6 @@ popTracker = do
             writeIORef ref rest
             return (Just next)
 
--- | Wait for the connection message
-readConn :: ClientM ConnMessage
-readConn =
-    liftIO . takeMVar =<< asks clientMsg
-    
--- | Return Nothing if no message is immediately available
-tryReadConn :: ClientM (Maybe ConnMessage)
-tryReadConn = 
-    liftIO . tryTakeMVar =<< asks clientMsg 
-
 
 -- | The result of an initial scout
 data ScoutResult
@@ -165,8 +155,8 @@ launchTorrent = do
     loop connInfo
   where
     loop connInfo = do
-        tracker <- popTracker
-        ($ tracker) . maybe noTrackers $ \tracker -> do
+        next <- popTracker
+        ($ next) . maybe noTrackers $ \tracker -> do
             r <- tryTracker connInfo tracker
             case r of
                 BadTracker err -> do
@@ -188,16 +178,22 @@ launchTorrent = do
             UDPTracker url prt -> 
                 launchAsync . Sock.withSocketsDo . runConnWith connInfo $
                 connectUDP url prt
-        liftIO $ threadDelay 1000000
-        ann <- tryReadConn
+        mvar <- asks clientMsg
+        res <- liftIO $ race (read mvar thread) timeOut
+        return (either id id res)
+    read :: MVar ConnMessage -> Async () -> IO ScoutResult
+    read mvar thread = do
+        ann <- takeMVar mvar
         case ann of
-            Nothing -> 
-                return ScoutTimedOut
-            Just (Right info) -> 
+            Right info ->
                 return (ScoutSuccessful info)
-            Just (Left err) -> do
-                liftIO $ cancel thread
+            Left err -> do
+                cancel thread
                 return (BadTracker err)
+    timeOut :: IO ScoutResult
+    timeOut = do
+        threadDelay 10000000
+        return ScoutTimedOut
     noTrackers :: MonadIO m => m ()
     noTrackers = putTextLn "No more trackers left to try :("
     launchAsync :: MonadIO m => IO () -> m (Async ())
