@@ -24,6 +24,8 @@ module Haze.Tracker
     , parseUDPConn
     , UDPTrackerRequest
     , newUDPRequest
+    , updateUDPTransID
+    , updateUDPConnID
     , encodeUDPRequest
     , Announce(..)
     , AnnounceInfo(..)
@@ -332,6 +334,16 @@ newUDPRequest meta peerID (UDPConnection trans conn) =
             treqTransactionID = Just trans
         }
     in UDPTrackerRequest conn withTrans
+
+-- | Updates the transaction ID in a UDP request
+updateUDPTransID :: ByteString -> UDPTrackerRequest -> UDPTrackerRequest
+updateUDPTransID transID (UDPTrackerRequest c treq) =
+    UDPTrackerRequest c (updateTransactionID (Just transID) treq)
+
+-- | Updates the connection ID in a UDP request
+updateUDPConnID :: ByteString -> UDPTrackerRequest -> UDPTrackerRequest
+updateUDPConnID connID (UDPTrackerRequest _ treq) =
+    UDPTrackerRequest connID treq
 
 -- | Encodes a UDP request as a bytestring
 encodeUDPRequest :: UDPTrackerRequest -> ByteString

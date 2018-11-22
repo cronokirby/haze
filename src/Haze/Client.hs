@@ -31,10 +31,11 @@ import Data.TieredList (TieredList, popTiered)
 import Haze.Bencoding (DecodeError(..), decode, decodeBen)
 import Haze.Tracker (
     Tracker(..), MetaInfo(..), Announce(..), AnnounceInfo(..), 
-    squashedTrackers, updateTransactionID,
+    UDPTrackerRequest, squashedTrackers, updateTransactionID,
     metaFromBytes, newTrackerRequest, trackerQuery,
     announceFromHTTP, parseUDPConn, parseUDPAnnounce,
-    newUDPRequest, encodeUDPRequest)
+    newUDPRequest, encodeUDPRequest, updateUDPTransID,
+    updateUDPConnID)
 
 
 {- | Generates a peer id from scratch.
@@ -293,17 +294,29 @@ connectUDP url' prt' = do
     bracket (makeUDPSocket url' prt') closeUDPSocket $ \udp -> do
         initiate connPeerID udp
         connBytes <- recvUDP udp 1024
-        announce <- runExceptT $ do
+        request <- runExceptT $ do
             connInfo <- parseFail parseUDPConn connBytes
-            let request = newUDPRequest connTorrent connPeerID connInfo
-            sendUDP udp (encodeUDPRequest request)
-            annBytes <- recvUDP udp 1024
-            parseFail parseUDPAnnounce annBytes
-        
-        info <- annConnMsg announce
-        putAnnounce info
+            return $ newUDPRequest connTorrent connPeerID connInfo
+        case request of
+            Left _    -> throw (BadAnnounceException "badannounce")
+            Right req -> loop udp req
     return () -- this seems to be necessary to force evaluation...
   where
+    loop udp request = do
+        sendUDP udp (encodeUDPRequest request)
+        annBytes <- recvUDP udp 1024
+        announce <- runExceptT $ parseFail parseUDPAnnounce annBytes
+        info <- annConnMsg announce
+        putAnnounce info
+        let newReq = updateReq info request
+            time = (* 1000000) . fromRight 15 $ fmap annInterval info
+        liftIO $ threadDelay time
+        loop udp newReq
+    updateReq :: ConnMessage -> UDPTrackerRequest -> UDPTrackerRequest
+    updateReq (Left _) req      = req
+    updateReq (Right info') req = maybe req
+        (\transID -> updateUDPTransID transID req)
+        (annTransactionID info')
     makeUDPSocket :: MonadIO m => Text -> Text -> m UDPSocket
     makeUDPSocket url prt = liftIO $ do
         let urlS =  toString url
