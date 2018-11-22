@@ -50,7 +50,7 @@ import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Network.Socket (HostName, PortNumber)
 import Text.Show (Show(..))
 
-import Data.TieredList (TieredList, makeTieredList)
+import Data.TieredList (TieredList, makeTieredList, tieredSingleton)
 import Haze.Bencoding (Bencoding(..), Decoder(..), DecodeError(..),
                        decode, encode, encodeBen)
 import Haze.Bits (Bits, encodeIntegralN, packBytes, parseInt)
@@ -141,6 +141,16 @@ data MetaInfo = MetaInfo
     , metaEncoding :: Maybe Text
     }
     deriving (Show)
+
+{- | Make a tiered list of announces no matter what
+
+If the announce list isn't present, there will be a single
+tier with just the given announce. If the announce list
+is present, the single announce is ignored.
+-}
+squashedAnnounces :: MetaInfo -> TieredList Tracker
+squashedAnnounces MetaInfo{..} = 
+    fromMaybe (tieredSingleton metaAnnounce) metaAnnounceList
 
 
 -- | Try and decode a meta file from a bytestring
