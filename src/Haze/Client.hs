@@ -11,6 +11,7 @@ where
 
 import Relude
 
+import Control.Exception.Safe (bracket)
 import Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -76,34 +77,48 @@ connectHTTP peerID torrent url = do
     print announce
 
 
+-- | Represents a UDP connection to some tracker
+data UDPSocket = UDPSocket Sock.Socket Sock.SockAddr
+
+
 -- | Connect to a UDP tracker with url and port
 connectUDP :: ByteString -> MetaInfo -> Text -> Text -> IO ()
 connectUDP peerID torrent url prt = do
-    let urlS =  toString url
-        portS = toString prt
-        hints = Just Sock.defaultHints
-            { Sock.addrSocketType = Sock.Datagram 
-            }
-    target:_ <- Sock.getAddrInfo hints (Just urlS) (Just portS)
-    let fam  = Sock.addrFamily target
-        addr = Sock.addrAddress target
-    sock <- Sock.socket fam Sock.Datagram Sock.defaultProtocol
-    initiate sock addr
-    connBytes <- recv sock 1024
-    connInfo <- parseFail parseUDPConn connBytes
-    let request = newUDPRequest torrent peerID connInfo
-    sendAllTo sock (encodeUDPRequest request) addr
-    annBytes <- recv sock 1024
-    announce <- parseFail parseUDPAnnounce annBytes
-    print announce
+    bracket (makeUDPSocket url prt) closeUDPSocket $ \udp -> do
+        initiate udp
+        connBytes <- recvUDP udp 1024
+        connInfo <- parseFail parseUDPConn connBytes
+        let request = newUDPRequest torrent peerID connInfo
+        sendUDP udp (encodeUDPRequest request)
+        annBytes <- recvUDP udp 1024
+        announce <- parseFail parseUDPAnnounce annBytes
+        print announce
   where
-    initiate :: Sock.Socket -> Sock.SockAddr -> IO ()
-    initiate sock = sendAllTo sock $
-           "\0\0\4\x17\x27\x10\x19\x80"
-        <> "\0\0\0\0"
-        -- This should be sufficiently unique between clients
-        <> BS.drop 16 peerID
-
+    makeUDPSocket :: Text -> Text -> IO UDPSocket
+    makeUDPSocket url prt = do
+        let urlS =  toString url
+            portS = toString prt
+            hints = Just Sock.defaultHints
+                { Sock.addrSocketType = Sock.Datagram 
+                }
+        target:_ <- Sock.getAddrInfo hints (Just urlS) (Just portS)
+        let fam  = Sock.addrFamily target
+            addr = Sock.addrAddress target
+        sock <- Sock.socket fam Sock.Datagram Sock.defaultProtocol
+        return (UDPSocket sock addr)
+    closeUDPSocket :: UDPSocket -> IO ()
+    closeUDPSocket (UDPSocket sock _) = Sock.close sock
+    recvUDP :: UDPSocket -> Int -> IO ByteString
+    recvUDP (UDPSocket sock _) amount = recv sock amount
+    sendUDP :: UDPSocket -> ByteString -> IO ()
+    sendUDP (UDPSocket sock addr ) bytes = 
+        sendAllTo sock bytes addr
+    initiate :: UDPSocket -> IO ()
+    initiate udp = sendUDP udp $
+      "\0\0\4\x17\x27\x10\x19\x80"
+      <> "\0\0\0\0"
+      -- This should be sufficiently unique
+      <> BS.drop 16 peerID
 
 parseFail :: MonadFail m => AP.Parser a -> ByteString -> m a
 parseFail parser bs =
