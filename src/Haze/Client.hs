@@ -13,7 +13,8 @@ where
 
 import Relude
 
-import Control.Concurrent.Async (Async, async, cancel, link)
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (Async, async, cancel, link, race)
 import Control.Exception.Safe (
     MonadThrow, MonadCatch, MonadMask,
     Exception, bracket, throw)
@@ -26,9 +27,11 @@ import qualified Network.Socket as Sock
 import Network.Socket.ByteString (sendAllTo, recv)
 
 
-import Haze.Bencoding (DecodeError(..))
+import Data.TieredList (TieredList, popTiered)
+import Haze.Bencoding (DecodeError(..), decode, decodeBen)
 import Haze.Tracker (
     Tracker(..), MetaInfo(..), Announce(..), AnnounceInfo(..), 
+    squashedTrackers,
     metaFromBytes, newTrackerRequest, trackerQuery,
     announceFromHTTP, parseUDPConn, parseUDPAnnounce,
     newUDPRequest, encodeUDPRequest)
@@ -94,6 +97,8 @@ data ClientInfo = ClientInfo
     { clientTorrent :: MetaInfo
     -- | Used to communicate with the tracker connections
     , clientMsg :: MVar ConnMessage
+    -- | This changes as the client rejects torrents
+    , clientTrackers :: IORef (TieredList Tracker)
     }
 
 {- | Make a ClientInfo from a torrent with an empty Queue
@@ -104,7 +109,10 @@ to be sent, and we're always waiting
 -}
 newClientInfo :: MetaInfo -> IO ClientInfo
 newClientInfo torrent = 
-    ClientInfo torrent <$> newEmptyMVar
+    ClientInfo torrent <$> newEmptyMVar <*> trackers
+  where
+    trackers = 
+        newIORef (squashedTrackers torrent)
 
 -- | Represents a global torrent client
 newtype ClientM a = ClientM (ReaderT ClientInfo IO a)
@@ -112,21 +120,33 @@ newtype ClientM a = ClientM (ReaderT ClientInfo IO a)
              , MonadReader ClientInfo, MonadIO
              )
 
+
 -- | Runs a global client
 runClientM :: ClientM a -> ClientInfo -> IO a
 runClientM (ClientM m) = runReaderT m
 
+-- | Tries to fetch the next tracker, popping it off the list
+popTracker :: ClientM (Maybe Tracker)
+popTracker = do
+    ref <- asks clientTrackers
+    tiers <- readIORef ref
+    case popTiered tiers of
+        Nothing -> return Nothing
+        Just (next, rest) -> do
+            writeIORef ref rest
+            return (Just next)
 
--- | Wait for the connection message
-readConn :: ClientM ConnMessage
-readConn =
-    liftIO . takeMVar =<< asks clientMsg
-    
--- | Return Nothing if no message is immediately available
-tryReadConn :: ClientM (Maybe ConnMessage)
-tryReadConn = 
-    liftIO . tryTakeMVar =<< asks clientMsg 
 
+-- | The result of an initial scout
+data ScoutResult
+    -- | The tracker returned an error of some kind
+    = BadTracker TrackerError
+    -- | The attempt timed out
+    | ScoutTimedOut
+    -- | The scout was successful
+    | ScoutSuccessful AnnounceInfo
+    -- | We tried to connect to an unkown service
+    | ScoutUnkownTracker Text
 
 
 launchTorrent :: ClientM ()
@@ -134,21 +154,58 @@ launchTorrent = do
     peerID <- generatePeerID
     ClientInfo{..} <- ask
     let connInfo = ConnInfo peerID clientTorrent clientMsg
-    thread <- case metaAnnounce clientTorrent of
-        HTTPTracker url -> 
-            launchAsync . runConnWith connInfo $
-            connectHTTP url
-        UDPTracker url prt -> 
-            launchAsync . Sock.withSocketsDo . runConnWith connInfo $
-            connectUDP url prt
-    ann <- readConn
-    case ann of
-        Right info -> print info
-        Left err   -> do
-            putTextLn "Disconnecting from bad tracker:"
-            print err
-            liftIO $ cancel thread
+    loop connInfo
   where
+    loop connInfo = do
+        next <- popTracker
+        ($ next) . maybe noTrackers $ \tracker -> do
+            r <- tryTracker connInfo tracker
+            case r of
+                BadTracker err -> do
+                    putTextLn ("Disconnecting from bad tracker:")
+                    print err
+                    loop connInfo
+                ScoutTimedOut -> do
+                    putTextLn "No response after 1s"
+                    loop connInfo
+                ScoutSuccessful info -> do
+                    print info
+                ScoutUnkownTracker t -> do
+                    putTextLn "Skipping unkown tracker"
+    tryTracker :: ConnInfo -> Tracker -> ClientM ScoutResult
+    tryTracker connInfo tracker = do
+        putTextLn ("Trying: " <> show tracker)
+        let action = case tracker of
+                HTTPTracker url -> 
+                    Right . launchAsync . runConnWith connInfo $
+                    connectHTTP url
+                UDPTracker url prt -> 
+                    Right . launchAsync . Sock.withSocketsDo . runConnWith connInfo $
+                    connectUDP url prt
+                UnknownTracker t ->
+                    Left (ScoutUnkownTracker t)
+        case action of
+            Right thread -> do
+                threadID <- thread
+                mvar <- asks clientMsg
+                res <- liftIO $ race (read mvar threadID) timeOut
+                return (either id id res)
+            Left res -> return res
+    read :: MVar ConnMessage -> Async () -> IO ScoutResult
+    read mvar thread = do
+        ann <- takeMVar mvar
+        case ann of
+            Right info ->
+                return (ScoutSuccessful info)
+            Left err -> do
+                cancel thread
+                return (BadTracker err)
+    timeOut :: IO ScoutResult
+    timeOut = do
+        threadDelay 1000000
+        return ScoutTimedOut
+    noTrackers :: MonadIO m => m ()
+    noTrackers = putTextLn "No more trackers left to try :("
     launchAsync :: MonadIO m => IO () -> m (Async ())
     launchAsync m = liftIO $ do
         a <- async m
@@ -224,6 +281,7 @@ connectUDP url' prt' = do
             annBytes <- recvUDP udp 1024
             parseFail parseUDPAnnounce annBytes
         putAnnounce announce
+    return () -- this seems to be necessary to force evaluation...
   where
     makeUDPSocket :: MonadIO m => Text -> Text -> m UDPSocket
     makeUDPSocket url prt = liftIO $ do

@@ -28,6 +28,7 @@ library
                        Haze.Client
                        Haze.Peer
                        Haze.Tracker
+                       Data.TieredList
   ghc-options:         -Wall
   build-depends:       base-noprelude       >= 4.11 && < 5
                      , attoparsec           >= 0.13 && < 0.14
