@@ -9,7 +9,7 @@ then data sent to and returned from a tracker.
 -}
 module Haze.Tracker 
     ( Tracker(..)
-    , TieredList(..)
+    , TieredList
     , MD5Sum(..)
     , SHA1
     , getSHA1
@@ -50,6 +50,7 @@ import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Network.Socket (HostName, PortNumber)
 import Text.Show (Show(..))
 
+import Data.TieredList (TieredList, makeTieredList)
 import Haze.Bencoding (Bencoding(..), Decoder(..), DecodeError(..),
                        decode, encode, encodeBen)
 import Haze.Bits (Bits, encodeIntegralN, packBytes, parseInt)
@@ -85,15 +86,6 @@ trackerFromURL t
         let (url, port) = T.span (/= ':') unPrefix
         return (UDPTracker url (T.drop 1 port))
 
-
-{- | Represents a tiered list of objects.
-
-Every element in the tier is tried before moving on
-to the next tier. In MetaInfo files, multiple
-tiers of trackers are provided, with each tier needing
-to be tried before the subsequent one is used.
--}
-newtype TieredList a = TieredList [[a]] deriving (Show)
 
 -- | Represents the MD5 sum of a file
 newtype MD5Sum = MD5Sum ByteString deriving (Show)
@@ -190,7 +182,7 @@ decodeMeta = Decoder doDecode
     getAnnounces :: ByteString -> BenMap -> Maybe (TieredList Tracker)
     getAnnounces k mp = 
         withKey k mp 
-        (fmap TieredList . traverse getTrackers <=< tryList)
+        (fmap makeTieredList . traverse getTrackers <=< tryList)
       where
         getTrackers :: Bencoding -> Maybe [Tracker]
         getTrackers = 
