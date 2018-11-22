@@ -34,6 +34,7 @@ module Haze.Tracker
     , ReqEvent(..)
     , TrackerRequest(..)
     , newTrackerRequest
+    , updateTransactionID
     , trackerQuery
     )
 where
@@ -278,6 +279,9 @@ newTrackerRequest :: MetaInfo -> ByteString -> TrackerRequest
 newTrackerRequest meta@MetaInfo{..} peerID = TrackerRequest 
     metaInfoHash peerID 6881 0 0 (totalFileSize meta) 
     True ReqStarted Nothing Nothing
+
+updateTransactionID :: Maybe ByteString -> TrackerRequest -> TrackerRequest
+updateTransactionID transID treq = treq { treqTransactionID = transID }
 
 
 -- | Encodes a 'TrackerRequest' as query parameters

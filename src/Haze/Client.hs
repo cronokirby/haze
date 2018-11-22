@@ -31,7 +31,7 @@ import Data.TieredList (TieredList, popTiered)
 import Haze.Bencoding (DecodeError(..), decode, decodeBen)
 import Haze.Tracker (
     Tracker(..), MetaInfo(..), Announce(..), AnnounceInfo(..), 
-    squashedTrackers,
+    squashedTrackers, updateTransactionID,
     metaFromBytes, newTrackerRequest, trackerQuery,
     announceFromHTTP, parseUDPConn, parseUDPAnnounce,
     newUDPRequest, encodeUDPRequest)
@@ -78,7 +78,18 @@ data BadAnnounceException = BadAnnounceException Text
     deriving (Show)
 instance Exception BadAnnounceException
 
+
 type ConnMessage = Either TrackerError AnnounceInfo
+
+-- | Throw an exception if the announce is bad
+annConnMsg :: MonadThrow m => Either TrackerError Announce -> m ConnMessage
+annConnMsg (Left e) =
+    return (Left e)
+annConnMsg (Right (FailedAnnounce t))  = 
+    throw (BadAnnounceException t)
+annConnMsg (Right (GoodAnnounce info)) =
+    return (Right info)
+
 
 {- | Represents the state of the client
 
@@ -236,13 +247,11 @@ runConnWith info (ConnM m) = runReaderT m info
 Since bad announces are usually our fault, we want
 to throw an exception
 -}
-putAnnounce :: Either TrackerError Announce -> ConnM ()
+putAnnounce :: Either TrackerError AnnounceInfo -> ConnM ()
 putAnnounce (Left err) = do
     mvar <- asks connMsg
     putMVar mvar (Left err)
-putAnnounce (Right (FailedAnnounce t)) = 
-    liftIO (throw (BadAnnounceException t))
-putAnnounce (Right (GoodAnnounce info)) = do
+putAnnounce (Right info) = do
     mvar <- asks connMsg
     putMVar mvar (Right info)
 
@@ -252,15 +261,25 @@ connectHTTP url = do
     ConnInfo{..} <- ask
     mgr <- liftIO $ newManager defaultManagerSettings
     request <- liftIO $ parseRequest (toString url)
-    let trackerReq = newTrackerRequest connTorrent connPeerID
-        query = trackerQuery trackerReq
-    let withQuery = setQueryString query request
-    response <- liftIO $ httpLbs withQuery mgr
-    let bytes = LBS.toStrict $ responseBody response
-        announce = case announceFromHTTP bytes of
-            Left (DecodeError err) -> Left (TrackerParseErr err)
-            Right info             -> Right info
-    putAnnounce announce
+    loop mgr request (newTrackerRequest connTorrent connPeerID)
+  where
+    loop mgr req trackerReq = do
+        let query     = trackerQuery trackerReq
+            withQuery = setQueryString query req
+        response <- liftIO $ httpLbs withQuery mgr
+        let bytes = LBS.toStrict $ responseBody response
+            fullAnnounce = makeTrackerError (announceFromHTTP bytes)
+        info <- annConnMsg fullAnnounce
+        putAnnounce info
+        let newTReq = updateReq trackerReq fullAnnounce
+            time = (1000000 *) . fromRight 15 $ fmap annInterval info
+        liftIO $ threadDelay time
+        loop mgr req newTReq
+    makeTrackerError (Left (DecodeError err)) = Left (TrackerParseErr err)
+    makeTrackerError (Right x)                = Right x
+    updateReq treq (Right (GoodAnnounce info)) =
+        updateTransactionID (annTransactionID info) treq
+    updateReq treq _    = treq
 
 
 -- | Represents a UDP connection to some tracker
@@ -280,7 +299,9 @@ connectUDP url' prt' = do
             sendUDP udp (encodeUDPRequest request)
             annBytes <- recvUDP udp 1024
             parseFail parseUDPAnnounce annBytes
-        putAnnounce announce
+        
+        info <- annConnMsg announce
+        putAnnounce info
     return () -- this seems to be necessary to force evaluation...
   where
     makeUDPSocket :: MonadIO m => Text -> Text -> m UDPSocket
