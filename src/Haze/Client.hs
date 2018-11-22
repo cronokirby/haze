@@ -13,6 +13,7 @@ where
 
 import Relude
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link)
 import Control.Exception.Safe (
     MonadThrow, MonadCatch, MonadMask,
@@ -146,15 +147,38 @@ tryReadConn =
     liftIO . tryTakeMVar =<< asks clientMsg 
 
 
+-- | The result of an initial scout
+data ScoutResult
+    -- | The tracker returned an error of some kind
+    = BadTracker TrackerError
+    -- | The attempt timed out
+    | ScoutTimedOut
+    -- | The scout was successful
+    | ScoutSuccessful AnnounceInfo
+
+
 launchTorrent :: ClientM ()
 launchTorrent = do
     peerID <- generatePeerID
     ClientInfo{..} <- ask
     let connInfo = ConnInfo peerID clientTorrent clientMsg
-    tracker <- popTracker
-    maybe noTrackers (tryTracker connInfo) tracker
+    loop connInfo
   where
-    tryTracker :: ConnInfo -> Tracker -> ClientM ()
+    loop connInfo = do
+        tracker <- popTracker
+        ($ tracker) . maybe noTrackers $ \tracker -> do
+            r <- tryTracker connInfo tracker
+            case r of
+                BadTracker err -> do
+                    putTextLn ("Disconnecting from bad tracker:")
+                    print err
+                    loop connInfo
+                ScoutTimedOut -> do
+                    putTextLn "No response after 1s"
+                    loop connInfo
+                ScoutSuccessful info -> do
+                    print info
+    tryTracker :: ConnInfo -> Tracker -> ClientM ScoutResult
     tryTracker connInfo tracker = do
         putTextLn ("Trying: " <> show tracker)
         thread <- case tracker of
@@ -164,13 +188,16 @@ launchTorrent = do
             UDPTracker url prt -> 
                 launchAsync . Sock.withSocketsDo . runConnWith connInfo $
                 connectUDP url prt
-        ann <- readConn
+        liftIO $ threadDelay 1000000
+        ann <- tryReadConn
         case ann of
-            Right info -> print info
-            Left err   -> do
-                putTextLn "Disconnecting from bad tracker:"
-                print err
+            Nothing -> 
+                return ScoutTimedOut
+            Just (Right info) -> 
+                return (ScoutSuccessful info)
+            Just (Left err) -> do
                 liftIO $ cancel thread
+                return (BadTracker err)
     noTrackers :: MonadIO m => m ()
     noTrackers = putTextLn "No more trackers left to try :("
     launchAsync :: MonadIO m => IO () -> m (Async ())
