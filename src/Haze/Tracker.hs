@@ -17,6 +17,7 @@ module Haze.Tracker
     , FileInfo(..)
     , FileItem(..)
     , MetaInfo(..)
+    , squashedTrackers
     , decodeMeta
     , metaFromBytes
     , UDPConnection(..)
@@ -142,14 +143,14 @@ data MetaInfo = MetaInfo
     }
     deriving (Show)
 
-{- | Make a tiered list of announces no matter what
+{- | Make a tiered list of trackers no matter what
 
 If the announce list isn't present, there will be a single
-tier with just the given announce. If the announce list
-is present, the single announce is ignored.
+tier with just the given trackers. If the tracker list
+is present, the single tracker is ignored.
 -}
-squashedAnnounces :: MetaInfo -> TieredList Tracker
-squashedAnnounces MetaInfo{..} = 
+squashedTrackers :: MetaInfo -> TieredList Tracker
+squashedTrackers MetaInfo{..} = 
     fromMaybe (tieredSingleton metaAnnounce) metaAnnounceList
 
 

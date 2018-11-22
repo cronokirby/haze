@@ -26,9 +26,11 @@ import qualified Network.Socket as Sock
 import Network.Socket.ByteString (sendAllTo, recv)
 
 
+import Data.TieredList (TieredList, popTiered)
 import Haze.Bencoding (DecodeError(..))
 import Haze.Tracker (
     Tracker(..), MetaInfo(..), Announce(..), AnnounceInfo(..), 
+    squashedTrackers,
     metaFromBytes, newTrackerRequest, trackerQuery,
     announceFromHTTP, parseUDPConn, parseUDPAnnounce,
     newUDPRequest, encodeUDPRequest)
@@ -94,6 +96,8 @@ data ClientInfo = ClientInfo
     { clientTorrent :: MetaInfo
     -- | Used to communicate with the tracker connections
     , clientMsg :: MVar ConnMessage
+    -- | This changes as the client rejects torrents
+    , clientTrackers :: IORef (TieredList Tracker)
     }
 
 {- | Make a ClientInfo from a torrent with an empty Queue
@@ -104,7 +108,10 @@ to be sent, and we're always waiting
 -}
 newClientInfo :: MetaInfo -> IO ClientInfo
 newClientInfo torrent = 
-    ClientInfo torrent <$> newEmptyMVar
+    ClientInfo torrent <$> newEmptyMVar <*> trackers
+  where
+    trackers = 
+        newIORef (squashedTrackers torrent)
 
 -- | Represents a global torrent client
 newtype ClientM a = ClientM (ReaderT ClientInfo IO a)
@@ -112,10 +119,21 @@ newtype ClientM a = ClientM (ReaderT ClientInfo IO a)
              , MonadReader ClientInfo, MonadIO
              )
 
+
 -- | Runs a global client
 runClientM :: ClientM a -> ClientInfo -> IO a
 runClientM (ClientM m) = runReaderT m
 
+-- | Tries to fetch the next tracker, popping it off the list
+popTracker :: ClientM (Maybe Tracker)
+popTracker = do
+    ref <- asks clientTrackers
+    tiers <- readIORef ref
+    case popTiered tiers of
+        Nothing -> return Nothing
+        Just (next, rest) -> do
+            writeIORef ref rest
+            return (Just next)
 
 -- | Wait for the connection message
 readConn :: ClientM ConnMessage
@@ -128,27 +146,33 @@ tryReadConn =
     liftIO . tryTakeMVar =<< asks clientMsg 
 
 
-
 launchTorrent :: ClientM ()
 launchTorrent = do
     peerID <- generatePeerID
     ClientInfo{..} <- ask
     let connInfo = ConnInfo peerID clientTorrent clientMsg
-    thread <- case metaAnnounce clientTorrent of
-        HTTPTracker url -> 
-            launchAsync . runConnWith connInfo $
-            connectHTTP url
-        UDPTracker url prt -> 
-            launchAsync . Sock.withSocketsDo . runConnWith connInfo $
-            connectUDP url prt
-    ann <- readConn
-    case ann of
-        Right info -> print info
-        Left err   -> do
-            putTextLn "Disconnecting from bad tracker:"
-            print err
-            liftIO $ cancel thread
+    tracker <- popTracker
+    maybe noTrackers (tryTracker connInfo) tracker
   where
+    tryTracker :: ConnInfo -> Tracker -> ClientM ()
+    tryTracker connInfo tracker = do
+        putTextLn ("Trying: " <> show tracker)
+        thread <- case tracker of
+            HTTPTracker url -> 
+                launchAsync . runConnWith connInfo $
+                connectHTTP url
+            UDPTracker url prt -> 
+                launchAsync . Sock.withSocketsDo . runConnWith connInfo $
+                connectUDP url prt
+        ann <- readConn
+        case ann of
+            Right info -> print info
+            Left err   -> do
+                putTextLn "Disconnecting from bad tracker:"
+                print err
+                liftIO $ cancel thread
+    noTrackers :: MonadIO m => m ()
+    noTrackers = putTextLn "No more trackers left to try :("
     launchAsync :: MonadIO m => IO () -> m (Async ())
     launchAsync m = liftIO $ do
         a <- async m
