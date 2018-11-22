@@ -248,6 +248,7 @@ connectUDP url' prt' = do
             annBytes <- recvUDP udp 1024
             parseFail parseUDPAnnounce annBytes
         putAnnounce announce
+    return () -- this seems to be necessary to force evaluation...
   where
     makeUDPSocket :: MonadIO m => Text -> Text -> m UDPSocket
     makeUDPSocket url prt = liftIO $ do
