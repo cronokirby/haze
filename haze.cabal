@@ -31,6 +31,7 @@ library
   ghc-options:         -Wall
   build-depends:       base-noprelude       >= 4.11 && < 5
                      , attoparsec           >= 0.13 && < 0.14
+                     , async                >= 2.2  && < 2.3
                      , bytestring           >= 0.10 && < 0.11
                      , cryptohash-sha1      >= 0.11 && < 0.12
                      , http-client          >= 0.5  && < 0.6
