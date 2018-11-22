@@ -142,8 +142,12 @@ launchTorrent = do
             launchAsync . Sock.withSocketsDo . runConnWith connInfo $
             connectUDP url prt
     ann <- readConn
-    print ann
-    liftIO $ cancel thread
+    case ann of
+        Right info -> print info
+        Left err   -> do
+            putTextLn "Disconnecting from bad tracker:"
+            print err
+            liftIO $ cancel thread
   where
     launchAsync :: MonadIO m => IO () -> m (Async ())
     launchAsync m = liftIO $ do
