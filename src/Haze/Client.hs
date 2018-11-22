@@ -28,7 +28,7 @@ import Network.Socket.ByteString (sendAllTo, recv)
 
 
 import Data.TieredList (TieredList, popTiered)
-import Haze.Bencoding (DecodeError(..))
+import Haze.Bencoding (DecodeError(..), decode, decodeBen)
 import Haze.Tracker (
     Tracker(..), MetaInfo(..), Announce(..), AnnounceInfo(..), 
     squashedTrackers,
@@ -145,6 +145,8 @@ data ScoutResult
     | ScoutTimedOut
     -- | The scout was successful
     | ScoutSuccessful AnnounceInfo
+    -- | We tried to connect to an unkown service
+    | ScoutUnkownTracker Text
 
 
 launchTorrent :: ClientM ()
@@ -168,19 +170,27 @@ launchTorrent = do
                     loop connInfo
                 ScoutSuccessful info -> do
                     print info
+                ScoutUnkownTracker t -> do
+                    putTextLn "Skipping unkown tracker"
     tryTracker :: ConnInfo -> Tracker -> ClientM ScoutResult
     tryTracker connInfo tracker = do
         putTextLn ("Trying: " <> show tracker)
-        thread <- case tracker of
-            HTTPTracker url -> 
-                launchAsync . runConnWith connInfo $
-                connectHTTP url
-            UDPTracker url prt -> 
-                launchAsync . Sock.withSocketsDo . runConnWith connInfo $
-                connectUDP url prt
-        mvar <- asks clientMsg
-        res <- liftIO $ race (read mvar thread) timeOut
-        return (either id id res)
+        let action = case tracker of
+                HTTPTracker url -> 
+                    Right . launchAsync . runConnWith connInfo $
+                    connectHTTP url
+                UDPTracker url prt -> 
+                    Right . launchAsync . Sock.withSocketsDo . runConnWith connInfo $
+                    connectUDP url prt
+                UnknownTracker t ->
+                    Left (ScoutUnkownTracker t)
+        case action of
+            Right thread -> do
+                threadID <- thread
+                mvar <- asks clientMsg
+                res <- liftIO $ race (read mvar threadID) timeOut
+                return (either id id res)
+            Left res -> return res
     read :: MVar ConnMessage -> Async () -> IO ScoutResult
     read mvar thread = do
         ann <- takeMVar mvar
@@ -192,7 +202,7 @@ launchTorrent = do
                 return (BadTracker err)
     timeOut :: IO ScoutResult
     timeOut = do
-        threadDelay 10000000
+        threadDelay 1000000
         return ScoutTimedOut
     noTrackers :: MonadIO m => m ()
     noTrackers = putTextLn "No more trackers left to try :("

@@ -66,6 +66,7 @@ link and port, ready for socket connection.
 data Tracker 
     = HTTPTracker Text 
     | UDPTracker Text Text
+    | UnknownTracker Text
     deriving (Show)
 
 
@@ -75,14 +76,14 @@ Makes a decision based on the presence of udp:// or
 http:// or https:// in the url. 
 Will fail completely if none of these is found.
 -}
-trackerFromURL :: Text -> Maybe Tracker
+trackerFromURL :: Text -> Tracker
 trackerFromURL t
     | T.isPrefixOf "udp://"   t = udpFromURL t
-    | T.isPrefixOf "http://"  t = Just (HTTPTracker t)
-    | T.isPrefixOf "https://" t = Just (HTTPTracker t)
-    | otherwise                 = Nothing
+    | T.isPrefixOf "http://"  t = HTTPTracker t
+    | T.isPrefixOf "https://" t = HTTPTracker t
+    | otherwise                 = UnknownTracker t
   where
-    udpFromURL t' = do
+    udpFromURL t' = fromMaybe (UnknownTracker t) $ do
         unPrefix <- T.stripPrefix "udp://" t'
         let (url, port) = T.span (/= ':') unPrefix
         return (UDPTracker url (T.drop 1 port))
@@ -178,7 +179,7 @@ decodeMeta = Decoder doDecode
         (metaPieces, metaPrivate, metaFile) <- getInfo info
         let metaInfoHash = SHA1 $ SHA1.hash (encode encodeBen info)
         announceURL     <- withKey "announce" mp tryText
-        metaAnnounce    <- trackerFromURL announceURL
+        let metaAnnounce = trackerFromURL announceURL
         let metaAnnounceList = getAnnounces "announce-list" mp
         let metaCreation  = withKey "creation date" mp tryDate
         let metaComment   = withKey "comment" mp tryText
@@ -197,7 +198,7 @@ decodeMeta = Decoder doDecode
       where
         getTrackers :: Bencoding -> Maybe [Tracker]
         getTrackers = 
-            traverse (trackerFromURL <=< tryText) <=< tryList
+            traverse (fmap trackerFromURL . tryText) <=< tryList
     tryDate :: Bencoding -> Maybe UTCTime
     tryDate (BInt i) = Just . posixSecondsToUTCTime $
             fromInteger (toInteger i)
