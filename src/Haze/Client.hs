@@ -66,31 +66,18 @@ launchClient file = do
             runClientM launchTorrent clientInfo
 
 
--- | Represents errors that can happen with a tracker
-data TrackerError
-    -- | A malformatted packet was sent to the client
-    = TrackerParseErr Text
-    -- | The tracker sent an incorrect transaction ID
-    | TrackerTransactionErr
-    deriving (Show)
-
--- | This will get thrown because of a programmer error
-data BadAnnounceException = BadAnnounceException Text
+-- | Represents the exceptions that can get thrown from a connection
+data BadAnnounceException 
+    = BadParse Text 
+    | BadAnnounce Text
+    | BadTransaction
     deriving (Show)
 instance Exception BadAnnounceException
 
-
-type ConnMessage = Either TrackerError AnnounceInfo
-
--- | Throw an exception if the announce is bad
-annConnMsg :: MonadThrow m => Either TrackerError Announce -> m ConnMessage
-annConnMsg (Left e) =
-    return (Left e)
-annConnMsg (Right (FailedAnnounce t))  = 
-    throw (BadAnnounceException t)
-annConnMsg (Right (GoodAnnounce info)) =
-    return (Right info)
-
+-- | Get the announce info by throwing an exception
+getAnnInfo :: MonadThrow m => Announce -> m AnnounceInfo
+getAnnInfo (FailedAnnounce t)  = throw (BadAnnounce t)
+getAnnInfo (GoodAnnounce info) = return info
 
 {- | Represents the state of the client
 
@@ -108,7 +95,7 @@ in reaction to a message.
 data ClientInfo = ClientInfo
     { clientTorrent :: MetaInfo
     -- | Used to communicate with the tracker connections
-    , clientMsg :: MVar ConnMessage
+    , clientMsg :: MVar AnnounceInfo
     -- | This changes as the client rejects torrents
     , clientTrackers :: IORef (TieredList Tracker)
     }
@@ -151,10 +138,8 @@ popTracker = do
 
 -- | The result of an initial scout
 data ScoutResult
-    -- | The tracker returned an error of some kind
-    = BadTracker TrackerError
     -- | The attempt timed out
-    | ScoutTimedOut
+    = ScoutTimedOut
     -- | The scout was successful
     | ScoutSuccessful AnnounceInfo
     -- | We tried to connect to an unkown service
@@ -173,10 +158,6 @@ launchTorrent = do
         ($ next) . maybe noTrackers $ \tracker -> do
             r <- tryTracker connInfo tracker
             case r of
-                BadTracker err -> do
-                    putTextLn ("Disconnecting from bad tracker:")
-                    print err
-                    loop connInfo
                 ScoutTimedOut -> do
                     putTextLn "No response after 1s"
                     loop connInfo
@@ -203,15 +184,10 @@ launchTorrent = do
                 res <- liftIO $ race (read mvar threadID) timeOut
                 return (either id id res)
             Left res -> return res
-    read :: MVar ConnMessage -> Async () -> IO ScoutResult
+    read :: MVar AnnounceInfo -> Async () -> IO ScoutResult
     read mvar thread = do
         ann <- takeMVar mvar
-        case ann of
-            Right info ->
-                return (ScoutSuccessful info)
-            Left err -> do
-                cancel thread
-                return (BadTracker err)
+        return (ScoutSuccessful info)
     timeOut :: IO ScoutResult
     timeOut = do
         threadDelay 1000000
@@ -229,7 +205,7 @@ launchTorrent = do
 data ConnInfo = ConnInfo
     { connPeerID :: ByteString
     , connTorrent :: MetaInfo
-    , connMsg :: MVar ConnMessage
+    , connMsg :: MVar AnnounceInfo
     }
 
 
@@ -248,13 +224,10 @@ runConnWith info (ConnM m) = runReaderT m info
 Since bad announces are usually our fault, we want
 to throw an exception
 -}
-putAnnounce :: Either TrackerError AnnounceInfo -> ConnM ()
-putAnnounce (Left err) = do
+putAnnounce :: AnnounceInfo -> ConnM ()
+putAnnounce info = do
     mvar <- asks connMsg
-    putMVar mvar (Left err)
-putAnnounce (Right info) = do
-    mvar <- asks connMsg
-    putMVar mvar (Right info)
+    putMVar mvar info
 
 
 connectHTTP :: Text -> ConnM ()
@@ -269,8 +242,8 @@ connectHTTP url = do
             withQuery = setQueryString query req
         response <- liftIO $ httpLbs withQuery mgr
         let bytes = LBS.toStrict $ responseBody response
-            fullAnnounce = makeTrackerError (announceFromHTTP bytes)
-        info <- annConnMsg fullAnnounce
+            fullAnnounce = announceFromHTTP bytes
+        info <- getAnnInfo fullAnnounce
         putAnnounce info
         let newTReq = updateReq trackerReq fullAnnounce
             time = (1000000 *) . fromRight 15 $ fmap annInterval info
@@ -298,25 +271,24 @@ connectUDP url' prt' = do
             connInfo <- parseFail parseUDPConn connBytes
             return $ newUDPRequest connTorrent connPeerID connInfo
         case request of
-            Left _    -> throw (BadAnnounceException "badannounce")
+            Left _    -> throw (BadParse "badannounce")
             Right req -> loop udp req
     return () -- this seems to be necessary to force evaluation...
   where
     loop udp request = do
         sendUDP udp (encodeUDPRequest request)
         annBytes <- recvUDP udp 1024
-        announce <- runExceptT $ parseFail parseUDPAnnounce annBytes
+        announce <- parseFail parseUDPAnnounce annBytes
         info <- annConnMsg announce
         putAnnounce info
         let newReq = updateReq info request
             time = (* 1000000) . fromRight 15 $ fmap annInterval info
         liftIO $ threadDelay time
         loop udp newReq
-    updateReq :: ConnMessage -> UDPTrackerRequest -> UDPTrackerRequest
-    updateReq (Left _) req      = req
-    updateReq (Right info') req = maybe req
+    updateReq :: AnnounceInfo -> UDPTrackerRequest -> UDPTrackerRequest
+    updateReq info req = maybe req
         (\transID -> updateUDPTransID transID req)
-        (annTransactionID info')
+        (annTransactionID info)
     makeUDPSocket :: MonadIO m => Text -> Text -> m UDPSocket
     makeUDPSocket url prt = liftIO $ do
         let urlS =  toString url
@@ -343,8 +315,8 @@ connectUDP url' prt' = do
       -- This should be sufficiently unique
       <> BS.drop 16 peerID
 
-parseFail :: Monad m => AP.Parser a -> ByteString -> ExceptT TrackerError m a
-parseFail parser bs = ExceptT . return $
+parseFail :: MonadThrow m => AP.Parser a -> ByteString -> m a
+parseFail parser bs =
     case AP.parseOnly parser bs of
-        Left s  -> Left (TrackerParseErr (fromString s))
-        Right a -> Right a
+        Left s  -> throw (BadParse (fromString s))
+        Right a -> return a
