@@ -21,7 +21,7 @@ import Control.Exception.Safe (
 import Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
-import Data.Time.Clock (getCurrentTime, utctDayTime)
+import Data.Time.Clock (DiffTime, getCurrentTime, utctDayTime)
 import Network.HTTP.Client
 import qualified Network.Socket as Sock
 import Network.Socket.ByteString (sendAllTo, recv)
@@ -31,10 +31,17 @@ import Data.TieredList (TieredList, popTiered)
 import Haze.Bencoding (DecodeError(..))
 import Haze.Tracker (
     Tracker(..), MetaInfo(..), Announce(..), AnnounceInfo(..), 
-    UDPTrackerRequest, squashedTrackers, updateTransactionID,
+    UDPTrackerRequest, UDPConnection,
+    squashedTrackers, updateTransactionID,
     metaFromBytes, newTrackerRequest, trackerQuery,
     announceFromHTTP, parseUDPConn, parseUDPAnnounce,
     newUDPRequest, encodeUDPRequest, updateUDPTransID)
+
+
+
+-- | Get the current seconds part of a day
+getSeconds :: MonadIO m => m DiffTime
+getSeconds = liftIO $ utctDayTime <$> getCurrentTime
 
 
 {- | Generates a peer id from scratch.
@@ -47,7 +54,7 @@ a UTC timestamp, before then taking only the first 20 bytes.
 -}
 generatePeerID :: MonadIO m => m ByteString
 generatePeerID = liftIO $ do
-    secs <- utctDayTime <$> getCurrentTime
+    secs <- getSeconds
     let whole = "-HZ010-" <> show secs
         cut = BS.take 20 whole
     return cut
@@ -260,24 +267,47 @@ data UDPSocket = UDPSocket Sock.Socket Sock.SockAddr
 -- | Connect to a UDP tracker with url and port
 connectUDP :: Text -> Text -> ConnM ()
 connectUDP url' prt' = do
-    ConnInfo{..} <- ask
     void . bracket (makeUDPSocket url' prt') closeUDPSocket $ \udp -> do
-        initiate connPeerID udp
-        connBytes <- recvUDP udp 1024
-        conn <- parseFail parseUDPConn connBytes
-        let request = newUDPRequest connTorrent connPeerID conn
-        loop udp request
+        conn <- connect udp
+        now <- getSeconds
+        req <- makeUDPRequest conn
+        loop udp req now
   where
-    loop udp request = do
+    loop udp request lastConn = do
+        now <- getSeconds
+        (req, connTime) <- if (now - lastConn) > 1
+            then do
+                conn <- connect udp
+                connTime <- getSeconds
+                req <- makeUDPRequest conn
+                return (req, connTime)
+            else
+                return (request, lastConn)
+        info <- getAnnounce udp req
+        let newReq = updateReq info request
+            time = 1000000 * annInterval info
+        liftIO $ threadDelay time
+        loop udp newReq connTime
+    connect :: UDPSocket -> ConnM UDPConnection
+    connect udp = do
+        peerID <- asks connPeerID
+        let magicBytes = "\0\0\4\x17\x27\x10\x19\x80"
+                <> "\0\0\0\0" <> BS.drop 16 peerID
+        sendUDP udp magicBytes
+        connBytes <- recvUDP udp 1024
+        parseFail parseUDPConn connBytes
+    makeUDPRequest :: UDPConnection -> ConnM UDPTrackerRequest
+    makeUDPRequest conn = do
+        ConnInfo{..} <- ask
+        return (newUDPRequest connTorrent connPeerID conn)
+    getAnnounce :: UDPSocket -> UDPTrackerRequest -> ConnM AnnounceInfo
+    getAnnounce udp request = do
         sendUDP udp (encodeUDPRequest request)
         annBytes <- recvUDP udp 1024
         announce <- parseFail parseUDPAnnounce annBytes
         info <- getAnnInfo announce
         putAnnounce info
-        let newReq = updateReq info request
-            time = 1000000 * annInterval info
-        liftIO $ threadDelay time
-        loop udp newReq
+        return info
     updateReq :: AnnounceInfo -> UDPTrackerRequest -> UDPTrackerRequest
     updateReq info req = maybe req
         (`updateUDPTransID` req)
@@ -301,12 +331,7 @@ connectUDP url' prt' = do
     sendUDP :: MonadIO m => UDPSocket -> ByteString -> m ()
     sendUDP (UDPSocket sock addr ) bytes = liftIO $
         sendAllTo sock bytes addr
-    initiate :: MonadIO m => ByteString -> UDPSocket -> m ()
-    initiate peerID udp = sendUDP udp $
-      "\0\0\4\x17\x27\x10\x19\x80"
-      <> "\0\0\0\0"
-      -- This should be sufficiently unique
-      <> BS.drop 16 peerID
+
 
 parseFail :: MonadThrow m => AP.Parser a -> ByteString -> m a
 parseFail parser bs =
