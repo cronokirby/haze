@@ -266,7 +266,7 @@ data UDPSocket = UDPSocket Sock.Socket Sock.SockAddr
 
 -- | Connect to a UDP tracker with url and port
 connectUDP :: Text -> Text -> ConnM ()
-connectUDP url' prt' = do
+connectUDP url' prt' =
     void . bracket (makeUDPSocket url' prt') closeUDPSocket $ \udp -> do
         conn <- connect udp
         now <- getSeconds
