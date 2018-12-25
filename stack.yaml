@@ -1,7 +1,7 @@
-resolver: lts-12.24
+resolver: lts-13.0
 
 extra-deps: 
-  - base-noprelude-4.11.1.0
+  - base-noprelude-4.12.0.0
   - relude-0.4.0
 
 ghc-options:
