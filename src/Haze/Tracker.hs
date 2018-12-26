@@ -67,9 +67,9 @@ supported clients. UDPTracker comes with a pre split
 link and port, ready for socket connection.
 -}
 data Tracker 
-    = HTTPTracker Text 
-    | UDPTracker Text Text
-    | UnknownTracker Text
+    = HTTPTracker !Text 
+    | UDPTracker !Text !Text
+    | UnknownTracker !Text
     deriving (Show)
 
 
@@ -113,9 +113,9 @@ the single file.
 -}
 data FileInfo 
     -- | A single file, with name, length, and md5 sum
-    = SingleFile FilePath Int64 (Maybe MD5Sum)
+    = SingleFile !FilePath !Int64 !(Maybe MD5Sum)
     -- | Multiple files, with directory name
-    |  MultiFile FilePath [FileItem]
+    |  MultiFile !FilePath ![FileItem]
     deriving (Show)
 
 {- | A single file in a multi file torrent
@@ -125,7 +125,7 @@ from the 'SingleFile' branch of 'FileInfo'. Notably, instead of
 having a name, it instead has a list of strings representing
 the full file path, which must be respected.
 -}
-data FileItem = FileItem [FilePath] Int64 (Maybe MD5Sum) deriving (Show)
+data FileItem = FileItem ![FilePath] !Int64 !(Maybe MD5Sum) deriving (Show)
 
 {- | Represents the information in a .torrent file
 
@@ -134,16 +134,16 @@ torrent, and the trackers to use to connect to peers
 seeding those files.
 -}
 data MetaInfo = MetaInfo
-    { metaPieces :: SHAPieces
-    , metaPrivate :: Bool
-    , metaFile :: FileInfo
-    , metaInfoHash :: SHA1
-    , metaAnnounce :: Tracker
-    , metaAnnounceList :: Maybe (TieredList Tracker)
-    , metaCreation :: Maybe UTCTime
-    , metaComment :: Maybe Text
-    , metaCreatedBy :: Maybe Text 
-    , metaEncoding :: Maybe Text
+    { metaPieces :: !SHAPieces
+    , metaPrivate :: !Bool
+    , metaFile :: !FileInfo
+    , metaInfoHash :: !SHA1
+    , metaAnnounce :: !Tracker
+    , metaAnnounceList :: !(Maybe (TieredList Tracker))
+    , metaCreation :: !(Maybe UTCTime)
+    , metaComment :: !(Maybe Text)
+    , metaCreatedBy :: !(Maybe Text)
+    , metaEncoding :: !(Maybe Text)
     }
     deriving (Show)
 
@@ -256,23 +256,23 @@ data ReqEvent
 
 -- | Represents the information in a request to a tracker
 data TrackerRequest = TrackerRequest
-    { treqInfoHash :: SHA1
+    { treqInfoHash :: !SHA1
     -- | Represents the peer id for this client
-    , treqPeerID :: ByteString
-    , treqPort :: PortNumber
+    , treqPeerID :: !ByteString
+    , treqPort :: !PortNumber
     -- | The total number of bytes uploaded
-    , treqUploaded :: Int64
+    , treqUploaded :: !Int64
     -- | The total number of bytes downloaded
-    , treqDownloaded :: Int64
+    , treqDownloaded :: !Int64
     -- | The number of bytes in the file left to download
-    , treqLeft :: Int64
+    , treqLeft :: !Int64
     -- | Whether or not the client expects a compact response
-    , treqCompact :: Bool
+    , treqCompact :: !Bool
     -- | The current state of this ongoing request
-    , treqEvent :: ReqEvent
-    , treqNumWant :: Maybe Int
+    , treqEvent :: !ReqEvent
+    , treqNumWant :: !(Maybe Int)
     -- | This is to be included if the tracker sent it
-    , treqTransactionID :: Maybe ByteString
+    , treqTransactionID :: !(Maybe ByteString)
     }
     deriving (Show)
 
@@ -383,31 +383,31 @@ encodeUDPRequest (UDPTrackerRequest conn TrackerRequest{..}) =
 -- | Represents the announce response from a tracker
 data Announce
     -- | The request to the tracker was bad
-    = FailedAnnounce Text
-    | GoodAnnounce AnnounceInfo
+    = FailedAnnounce !Text
+    | GoodAnnounce !AnnounceInfo
     deriving (Show)
 
 -- | The information of a successful announce response
 data AnnounceInfo = AnnounceInfo
-    { annWarning :: Maybe Text -- ^ A warning message
-    , annInterval :: Int -- ^ Seconds between requests
+    { annWarning :: !(Maybe Text) -- ^ A warning message
+    , annInterval :: !Int -- ^ Seconds between requests
     -- | If present, the client must not act more frequently
-    , annMinInterval :: Maybe Int
-    , annTransactionID :: Maybe ByteString
+    , annMinInterval :: !(Maybe Int)
+    , annTransactionID :: !(Maybe ByteString)
     -- | The number of peers with the complete file
-    , annSeeders :: Maybe Int
+    , annSeeders :: !(Maybe Int)
     -- | The number of peers without the complete file
-    , annLeechers :: Maybe Int
-    , annPeers :: [Peer] 
+    , annLeechers :: !(Maybe Int)
+    , annPeers :: ![Peer] 
     }
     deriving (Show)
 
 
 -- | Represents a peer in the swarm
 data Peer = Peer
-    { peerID :: Maybe Text
-    , peerHost :: HostName
-    , peerPort :: PortNumber
+    { peerID :: !(Maybe Text)
+    , peerHost :: !HostName
+    , peerPort :: !PortNumber
     }
     deriving (Show)
 

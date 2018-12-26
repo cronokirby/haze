@@ -75,9 +75,9 @@ launchClient file = do
 -- | Represents the exceptions that can get thrown from a connection
 data BadAnnounceException 
     -- | We couldn't parse a tracker response
-    = BadParse Text 
+    = BadParse !Text 
     -- | The announce had a warning
-    | BadAnnounce Text
+    | BadAnnounce !Text
     -- | The transaction ID was mismatched
     | BadTransaction
     deriving (Show)
@@ -102,11 +102,11 @@ enough away to give us time to launch other things
 in reaction to a message.
 -}
 data ClientInfo = ClientInfo
-    { clientTorrent :: MetaInfo
+    { clientTorrent :: !MetaInfo
     -- | Used to communicate with the tracker connections
-    , clientMsg :: MVar AnnounceInfo
+    , clientMsg :: !(MVar AnnounceInfo)
     -- | This changes as the client rejects torrents
-    , clientTrackers :: IORef (TieredList Tracker)
+    , clientTrackers :: !(IORef (TieredList Tracker))
     }
 
 {- | Make a ClientInfo from a torrent with an empty Queue
@@ -150,9 +150,9 @@ data ScoutResult
     -- | The attempt timed out
     = ScoutTimedOut
     -- | The scout was successful
-    | ScoutSuccessful AnnounceInfo
+    | ScoutSuccessful !AnnounceInfo
     -- | We tried to connect to an unkown service
-    | ScoutUnkownTracker Text
+    | ScoutUnkownTracker !Text
 
 
 launchTorrent :: ClientM ()
@@ -262,7 +262,7 @@ connectHTTP url = do
 
 
 -- | Represents a UDP connection to some tracker
-data UDPSocket = UDPSocket Sock.Socket Sock.SockAddr
+data UDPSocket = UDPSocket !Sock.Socket !Sock.SockAddr
 
 -- | Connect to a UDP tracker with url and port
 connectUDP :: Text -> Text -> ConnM ()
