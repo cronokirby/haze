@@ -9,6 +9,7 @@ import System.Environment (getArgs)
 
 import Haze.Client (launchClient)
 
+
 runHaze :: IO ()
 runHaze = do
     args <- getArgs
