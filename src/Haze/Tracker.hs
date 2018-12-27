@@ -99,6 +99,7 @@ newtype MD5Sum = MD5Sum ByteString deriving (Show)
 newtype SHA1 = SHA1 { getSHA1 :: ByteString } deriving (Show)
 
 -- | Represents the concatenation of multiple SHA pieces.
+-- The integer represents the length of each piece
 data SHAPieces = SHAPieces Int64 ByteString
 
 instance Show SHAPieces where
@@ -117,6 +118,15 @@ data FileInfo
     -- | Multiple files, with directory name
     |  MultiFile !FilePath ![FileItem]
     deriving (Show)
+
+-- | Returns the total length of all files in the torrent
+totalFileLength :: FileInfo -> Int64
+totalFileLength (SingleFile _ l _) = l
+totalFileLength (MultiFile _ files) = sum $ map itemLength files
+  where
+    itemLength (FileItem _ l _ ) = l
+
+
 
 {- | A single file in a multi file torrent
 
