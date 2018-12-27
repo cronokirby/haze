@@ -16,6 +16,7 @@ module Haze.Tracker
     , SHAPieces(..)
     , FileInfo(..)
     , FileItem(..)
+    , totalFileLength
     , MetaInfo(..)
     , squashedTrackers
     , decodeMeta
@@ -100,7 +101,7 @@ newtype SHA1 = SHA1 { getSHA1 :: ByteString } deriving (Show)
 
 -- | Represents the concatenation of multiple SHA pieces.
 -- The integer represents the length of each piece
-data SHAPieces = SHAPieces Int64 ByteString
+data SHAPieces = SHAPieces Int64 SHA1
 
 instance Show SHAPieces where
     show (SHAPieces i _) = 
@@ -219,9 +220,9 @@ decodeMeta = Decoder doDecode
     getInfo :: Bencoding -> Maybe (SHAPieces, Bool, FileInfo)
     getInfo (BMap mp) = do
         let private = getBool "private" mp
-        pieceLen <- withKey "piece length" mp tryInt
-        pieces   <- withKey "pieces" mp tryBS
-        let sha = SHAPieces pieceLen pieces
+        pieceLen  <- withKey "piece length" mp tryInt
+        pieceHash <- SHA1 <$> withKey "pieces" mp tryBS
+        let sha = SHAPieces pieceLen pieceHash
         file <- case HM.lookup "files" mp of
             Nothing    -> getSingle mp
             Just files -> getMulti mp files

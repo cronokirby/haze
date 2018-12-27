@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {- |
 Description: Contains functions for working with the file Buffer.
 
@@ -13,12 +14,20 @@ where
 
 import Relude
 
-import Data.Array (Array)
+import Data.Array (Array, listArray)
+
+import Haze.Tracker (SHAPieces(..), MetaInfo(..), totalFileLength)
+
+
+-- | The size of a piece composing the torrent
+type PieceSize = Int64
+
+-- | The size of a block composing a piece
+type BlockSize = Int64
 
 
 -- | Represents a buffer of pieces composing the file(s) to download
-newtype PieceBuffer = PieceBuffer (Array Int Piece)
-
+data PieceBuffer = PieceBuffer !SHAPieces !(Array Int Piece)
 
 -- | Represents one of the pieces composing 
 data Piece
@@ -28,7 +37,6 @@ data Piece
     | Complete !ByteString
     -- | An incomplete set of blocks composing a this piece
     | Incomplete !(Array Int Block)
-
 
 
 -- | Represents a block of data sub dividing a piece
@@ -41,3 +49,28 @@ data Block
     | TaggedBlock
     -- | A fully downloaded block
     | FullBlock !ByteString
+
+
+makePieceBuffer :: BlockSize -> MetaInfo -> PieceBuffer
+makePieceBuffer blockSize MetaInfo {..} =
+    let shaPieces@(SHAPieces pieceLength _) = metaPieces
+        totalLength = totalFileLength metaFile
+        pieces = makePiece blockSize 
+             <$> chunkSizes totalLength pieceLength
+        maxPieceIndex = fromIntegral $ div totalLength pieceLength
+        pieceArr = listArray (0, maxPieceIndex) pieces
+    in PieceBuffer shaPieces pieceArr
+  where
+    chunkSizes :: Integral a => a -> a -> [a]
+    chunkSizes total size =
+        let (d, m) = divMod total size
+        in replicate (fromIntegral d) d ++ [m]
+
+-- | Construct a new piece given the piece size, and the block size
+-- Each piece in a torrent has the same size, except for the last one.
+-- The block size can be set when constructing a piece buffer
+makePiece :: BlockSize -> PieceSize -> Piece
+makePiece blockSize pieceSize = 
+    let maxBlockIndex = fromIntegral $ div pieceSize blockSize
+    in Incomplete . listArray (0, maxBlockIndex) $ repeat FreeBlock
+    
