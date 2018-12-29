@@ -11,31 +11,56 @@ module Haze.Client
     )
 where
 
-import Relude
+import           Relude
 
-import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, link, race)
-import Control.Exception.Safe (
-    MonadThrow, MonadCatch, MonadMask,
-    Exception, bracket, throw)
-import Data.Attoparsec.ByteString as AP
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
-import Data.Time.Clock (DiffTime, getCurrentTime, utctDayTime)
-import Network.HTTP.Client
-import qualified Network.Socket as Sock
-import Network.Socket.ByteString (sendAllTo, recv)
+import           Control.Concurrent             ( threadDelay )
+import           Control.Concurrent.Async       ( async
+                                                , link
+                                                , race
+                                                )
+import           Control.Exception.Safe         ( MonadThrow
+                                                , MonadCatch
+                                                , MonadMask
+                                                , Exception
+                                                , bracket
+                                                , throw
+                                                )
+import           Data.Attoparsec.ByteString    as AP
+import qualified Data.ByteString               as BS
+import qualified Data.ByteString.Lazy          as LBS
+import           Data.Time.Clock                ( DiffTime
+                                                , getCurrentTime
+                                                , utctDayTime
+                                                )
+import           Network.HTTP.Client
+import qualified Network.Socket                as Sock
+import           Network.Socket.ByteString      ( sendAllTo
+                                                , recv
+                                                )
 
 
-import Data.TieredList (TieredList, popTiered)
-import Haze.Bencoding (DecodeError(..))
-import Haze.Tracker (
-    Tracker(..), MetaInfo(..), Announce(..), AnnounceInfo(..), 
-    UDPTrackerRequest, UDPConnection,
-    squashedTrackers, updateTransactionID,
-    metaFromBytes, newTrackerRequest, trackerQuery,
-    announceFromHTTP, parseUDPConn, parseUDPAnnounce,
-    newUDPRequest, encodeUDPRequest, updateUDPTransID)
+import           Data.TieredList                ( TieredList
+                                                , popTiered
+                                                )
+import           Haze.Bencoding                 ( DecodeError(..) )
+import           Haze.Tracker                   ( Tracker(..)
+                                                , MetaInfo(..)
+                                                , Announce(..)
+                                                , AnnounceInfo(..)
+                                                , UDPTrackerRequest
+                                                , UDPConnection
+                                                , squashedTrackers
+                                                , updateTransactionID
+                                                , metaFromBytes
+                                                , newTrackerRequest
+                                                , trackerQuery
+                                                , announceFromHTTP
+                                                , parseUDPConn
+                                                , parseUDPAnnounce
+                                                , newUDPRequest
+                                                , encodeUDPRequest
+                                                , updateUDPTransID
+                                                )
 
 
 
@@ -56,7 +81,7 @@ generatePeerID :: MonadIO m => m ByteString
 generatePeerID = liftIO $ do
     secs <- getSeconds
     let whole = "-HZ010-" <> show secs
-        cut = BS.take 20 whole
+        cut   = BS.take 20 whole
     return cut
 
 
@@ -73,9 +98,9 @@ launchClient file = do
 
 
 -- | Represents the exceptions that can get thrown from a connection
-data BadAnnounceException 
+data BadAnnounceException
     -- | We couldn't parse a tracker response
-    = BadParse !Text 
+    = BadParse !Text
     -- | The announce had a warning
     | BadAnnounce !Text
     -- | The transaction ID was mismatched
@@ -85,8 +110,8 @@ instance Exception BadAnnounceException
 
 -- | Get the announce info by throwing an exception
 getAnnInfo :: MonadThrow m => Announce -> m AnnounceInfo
-getAnnInfo (FailedAnnounce t)  = throw (BadAnnounce t)
-getAnnInfo (GoodAnnounce info) = return info
+getAnnInfo (FailedAnnounce t   ) = throw (BadAnnounce t)
+getAnnInfo (GoodAnnounce   info) = return info
 
 {- | Represents the state of the client
 
@@ -116,11 +141,8 @@ than sufficient, since we only ever expect one message
 to be sent, and we're always waiting    
 -}
 newClientInfo :: MetaInfo -> IO ClientInfo
-newClientInfo torrent = 
-    ClientInfo torrent <$> newEmptyMVar <*> trackers
-  where
-    trackers = 
-        newIORef (squashedTrackers torrent)
+newClientInfo torrent = ClientInfo torrent <$> newEmptyMVar <*> trackers
+    where trackers = newIORef (squashedTrackers torrent)
 
 -- | Represents a global torrent client
 newtype ClientM a = ClientM (ReaderT ClientInfo IO a)
@@ -136,10 +158,10 @@ runClientM (ClientM m) = runReaderT m
 -- | Tries to fetch the next tracker, popping it off the list
 popTracker :: ClientM (Maybe Tracker)
 popTracker = do
-    ref <- asks clientTrackers
+    ref   <- asks clientTrackers
     tiers <- readIORef ref
     case popTiered tiers of
-        Nothing -> return Nothing
+        Nothing           -> return Nothing
         Just (next, rest) -> do
             writeIORef ref rest
             return (Just next)
@@ -157,8 +179,8 @@ data ScoutResult
 
 launchTorrent :: ClientM ()
 launchTorrent = do
-    peerID <- generatePeerID
-    ClientInfo{..} <- ask
+    peerID          <- generatePeerID
+    ClientInfo {..} <- ask
     let connInfo = ConnInfo peerID clientTorrent clientMsg
     scoutTrackers connInfo
   where
@@ -185,21 +207,21 @@ launchTorrent = do
     tryTracker connInfo tracker = do
         putTextLn ("Trying: " <> show tracker)
         case tracker of
-            HTTPTracker url -> 
-                launchConn  . runConnWith connInfo $
-                connectHTTP url
-            UDPTracker url prt -> 
-                launchConn . Sock.withSocketsDo . runConnWith connInfo $
-                connectUDP url prt
-            UnknownTracker t ->
-                return (ScoutUnkownTracker t)
+            HTTPTracker url ->
+                launchConn . runConnWith connInfo $ connectHTTP url
+            UDPTracker url prt ->
+                launchConn
+                    . Sock.withSocketsDo
+                    . runConnWith connInfo
+                    $ connectUDP url prt
+            UnknownTracker t -> return (ScoutUnkownTracker t)
     noTrackers :: MonadIO m => m ()
     noTrackers = putTextLn "No more trackers left to try :("
     launchConn :: IO () -> ClientM ScoutResult
     launchConn action = do
         liftIO $ async action >>= link
         mvar <- asks clientMsg
-        res <- liftIO $ race (read mvar) timeOut
+        res  <- liftIO $ race (read mvar) timeOut
         return (either id id res)
     read :: MVar AnnounceInfo -> IO ScoutResult
     read mvar = ScoutSuccessful <$> takeMVar mvar
@@ -238,9 +260,9 @@ putAnnounce info = asks connMsg >>= (`putMVar` info)
 
 connectHTTP :: Text -> ConnM ()
 connectHTTP url = do
-    ConnInfo{..} <- ask
-    mgr <- liftIO $ newManager defaultManagerSettings
-    request <- liftIO $ parseRequest (toString url)
+    ConnInfo {..} <- ask
+    mgr           <- liftIO $ newManager defaultManagerSettings
+    request       <- liftIO $ parseRequest (toString url)
     loop mgr request (newTrackerRequest connTorrent connPeerID)
   where
     loop mgr req trackerReq = do
@@ -249,16 +271,15 @@ connectHTTP url = do
         response <- liftIO $ httpLbs withQuery mgr
         let bytes = LBS.toStrict $ responseBody response
         fullAnnounce <- case announceFromHTTP bytes of
-                Left (DecodeError err) -> throw (BadParse err)
-                Right announce -> return announce
+            Left  (DecodeError err) -> throw (BadParse err)
+            Right announce          -> return announce
         info <- getAnnInfo fullAnnounce
         putAnnounce info
         let newTReq = updateReq trackerReq info
-            time = 1000000 * annInterval info
+            time    = 1000000 * annInterval info
         liftIO $ threadDelay time
         loop mgr req newTReq
-    updateReq treq info =
-        updateTransactionID (annTransactionID info) treq
+    updateReq treq info = updateTransactionID (annTransactionID info) treq
 
 
 -- | Represents a UDP connection to some tracker
@@ -269,57 +290,54 @@ connectUDP :: Text -> Text -> ConnM ()
 connectUDP url' prt' =
     void . bracket (makeUDPSocket url' prt') closeUDPSocket $ \udp -> do
         conn <- connect udp
-        now <- getSeconds
-        req <- makeUDPRequest conn
+        now  <- getSeconds
+        req  <- makeUDPRequest conn
         loop udp req now
   where
     loop udp request lastConn = do
-        now <- getSeconds
+        now             <- getSeconds
         (req, connTime) <- if (now - lastConn) > 1
             then do
-                conn <- connect udp
+                conn     <- connect udp
                 connTime <- getSeconds
-                req <- makeUDPRequest conn
+                req      <- makeUDPRequest conn
                 return (req, connTime)
-            else
-                return (request, lastConn)
+            else return (request, lastConn)
         info <- getAnnounce udp req
         let newReq = updateReq info request
-            time = 1000000 * annInterval info
+            time   = 1000000 * annInterval info
         liftIO $ threadDelay time
         loop udp newReq connTime
     connect :: UDPSocket -> ConnM UDPConnection
     connect udp = do
         peerID <- asks connPeerID
-        let magicBytes = "\0\0\4\x17\x27\x10\x19\x80"
-                <> "\0\0\0\0" <> BS.drop 16 peerID
+        let magicBytes =
+                "\0\0\4\x17\x27\x10\x19\x80" <> "\0\0\0\0" <> BS.drop 16 peerID
         sendUDP udp magicBytes
         connBytes <- recvUDP udp 1024
         parseFail parseUDPConn connBytes
     makeUDPRequest :: UDPConnection -> ConnM UDPTrackerRequest
     makeUDPRequest conn = do
-        ConnInfo{..} <- ask
+        ConnInfo {..} <- ask
         return (newUDPRequest connTorrent connPeerID conn)
     getAnnounce :: UDPSocket -> UDPTrackerRequest -> ConnM AnnounceInfo
     getAnnounce udp request = do
         sendUDP udp (encodeUDPRequest request)
         annBytes <- recvUDP udp 1024
         announce <- parseFail parseUDPAnnounce annBytes
-        info <- getAnnInfo announce
+        info     <- getAnnInfo announce
         putAnnounce info
         return info
     updateReq :: AnnounceInfo -> UDPTrackerRequest -> UDPTrackerRequest
-    updateReq info req = maybe req
-        (`updateUDPTransID` req)
-        (annTransactionID info)
+    updateReq info req =
+        maybe req (`updateUDPTransID` req) (annTransactionID info)
     makeUDPSocket :: MonadIO m => Text -> Text -> m UDPSocket
     makeUDPSocket url prt = liftIO $ do
-        let urlS =  toString url
+        let urlS  = toString url
             portS = toString prt
-            hints = Just Sock.defaultHints
-                { Sock.addrSocketType = Sock.Datagram 
-                }
-        target:_ <- Sock.getAddrInfo hints (Just urlS) (Just portS)
+            hints =
+                Just Sock.defaultHints { Sock.addrSocketType = Sock.Datagram }
+        target : _ <- Sock.getAddrInfo hints (Just urlS) (Just portS)
         let fam  = Sock.addrFamily target
             addr = Sock.addrAddress target
         sock <- Sock.socket fam Sock.Datagram Sock.defaultProtocol
@@ -329,12 +347,10 @@ connectUDP url' prt' =
     recvUDP :: MonadIO m => UDPSocket -> Int -> m ByteString
     recvUDP (UDPSocket sock _) amount = liftIO $ recv sock amount
     sendUDP :: MonadIO m => UDPSocket -> ByteString -> m ()
-    sendUDP (UDPSocket sock addr ) bytes = liftIO $
-        sendAllTo sock bytes addr
+    sendUDP (UDPSocket sock addr) bytes = liftIO $ sendAllTo sock bytes addr
 
 
 parseFail :: MonadThrow m => AP.Parser a -> ByteString -> m a
-parseFail parser bs =
-    case AP.parseOnly parser bs of
-        Left s  -> throw (BadParse (fromString s))
-        Right a -> return a
+parseFail parser bs = case AP.parseOnly parser bs of
+    Left  s -> throw (BadParse (fromString s))
+    Right a -> return a

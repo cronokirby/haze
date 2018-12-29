@@ -9,13 +9,16 @@ module Haze.Peer
     )
 where
 
-import Relude
+import           Relude
 
-import Data.Attoparsec.ByteString as AP
-import qualified Data.ByteString as BS
-import Network.Socket (PortNumber)
+import           Data.Attoparsec.ByteString    as AP
+import qualified Data.ByteString               as BS
+import           Network.Socket                 ( PortNumber )
 
-import Haze.Bits (encodeIntegralN, parseInt, parse16)
+import           Haze.Bits                      ( encodeIntegralN
+                                                , parseInt
+                                                , parse16
+                                                )
 
 
 {- | Represents the information related to a block we can request
@@ -25,12 +28,11 @@ Contains index, offset, and block length.
 data BlockInfo = BlockInfo Int Int Int deriving (Eq, Show)
 
 instance Hashable BlockInfo where
-    hashWithSalt i (BlockInfo a b c) = 
-        hashWithSalt i [a, b, c]
+    hashWithSalt i (BlockInfo a b c) = hashWithSalt i [a, b, c]
 
 
 -- | The messages sent between peers in a torrent
-data Message 
+data Message
     -- | Used to keep the connection open (think PING)
     = KeepAlive
     -- | The sender has choked the receiver
@@ -70,17 +72,13 @@ encodeMessage m = case m of
     UnChoke       -> BS.pack $ encInt 1 ++ [1]
     Interested    -> BS.pack $ encInt 1 ++ [2]
     UnInterested  -> BS.pack $ encInt 1 ++ [3]
-    Have i        -> BS.pack $ encInt 5 ++ [4] ++ encInt i
-    Request block -> BS.pack $
-        encInt 13 ++ [6] ++ encBlock block
+    Have    i     -> BS.pack $ encInt 5 ++ [4] ++ encInt i
+    Request block -> BS.pack $ encInt 13 ++ [6] ++ encBlock block
     RecvBlock a b block ->
         let len = BS.length block
-        in BS.pack (encInt (len + 9) ++ [7] ++ encInt a ++ encInt b)
-           <> block
-    Cancel block  -> BS.pack $
-        encInt 13 ++ [8] ++ encBlock block
-    Port p        -> BS.pack $
-        encInt 3 ++ [9] ++ drop 2 (encInt (fromIntegral p))
+        in  BS.pack (encInt (len + 9) ++ [7] ++ encInt a ++ encInt b) <> block
+    Cancel block -> BS.pack $ encInt 13 ++ [8] ++ encBlock block
+    Port p -> BS.pack $ encInt 3 ++ [9] ++ drop 2 (encInt (fromIntegral p))
   where
     encInt :: Int -> [Word8]
     encInt = encodeIntegralN 4
@@ -97,24 +95,20 @@ parser will fail.
 parseMessage :: AP.Parser Message
 parseMessage = do
     len <- parseInt
-    if len == 0
-        then return KeepAlive
-        else AP.anyWord8 >>= parseID len
+    if len == 0 then return KeepAlive else AP.anyWord8 >>= parseID len
   where
     parseID :: Int -> Word8 -> AP.Parser Message
     parseID 1  0 = return Choke
     parseID 1  1 = return UnChoke
-    parseID 1  2 = return Interested 
+    parseID 1  2 = return Interested
     parseID 1  3 = return UnInterested
     parseID 5  4 = Have <$> parseInt
-    parseID 13 6 = Request <$> 
-        liftA3 BlockInfo parseInt parseInt parseInt
-    parseID 13 8 = Cancel <$>
-        liftA3 BlockInfo parseInt parseInt parseInt
+    parseID 13 6 = Request <$> liftA3 BlockInfo parseInt parseInt parseInt
+    parseID 13 8 = Cancel <$> liftA3 BlockInfo parseInt parseInt parseInt
     parseID 3  9 = Port <$> parse16
     parseID ln 7 = do
         index <- parseInt
         begin <- parseInt
         let blockLen = ln - 9
         RecvBlock index begin <$> AP.take blockLen
-    parseID  _  _ = fail "Unrecognised ID, or bad length"
+    parseID _ _ = fail "Unrecognised ID, or bad length"

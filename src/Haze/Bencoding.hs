@@ -1,4 +1,4 @@
-{-|
+{- |
 Description: Functions related to the Bencoding type
 
 Contains the base data type representing Bencoding
@@ -21,12 +21,13 @@ module Haze.Bencoding
     )
 where
 
-import Relude
+import           Relude
 
-import qualified Data.ByteString.Char8 as BS
-import qualified Data.Attoparsec.ByteString.Char8 as AP
-import qualified Data.HashMap.Strict as HM
-import Data.Int (Int64)
+import qualified Data.ByteString.Char8         as BS
+import qualified Data.Attoparsec.ByteString.Char8
+                                               as AP
+import qualified Data.HashMap.Strict           as HM
+import           Data.Int                       ( Int64 )
 
 
 {- | Represents Bencoded data.
@@ -47,8 +48,8 @@ data Bencoding
 
 
 -- | Represents the encoding of some type into Bencoding
-newtype Encoder a = Encoder 
-    { runEncoder :: a -> Bencoding 
+newtype Encoder a = Encoder
+    { runEncoder :: a -> Bencoding
     }
 
 
@@ -65,22 +66,17 @@ encode :: Encoder a -> a -> ByteString
 encode encoder = encodeBS . runEncoder encoder
   where
     encodeBS :: Bencoding -> ByteString
-    encodeBS (BString t) = 
-        show (BS.length t) <> ":" <> t
-    encodeBS (BInt i)    =
-        "i" <> show i <> "e"
-    encodeBS (BList bs)  =
-        "l" <> foldMap encodeBS bs <> "e"
-    encodeBS (BMap mp)   =
-        "d" <> foldMap encodeKeyPair (toSorted mp) <> "e"
+    encodeBS (BString t ) = show (BS.length t) <> ":" <> t
+    encodeBS (BInt    i ) = "i" <> show i <> "e"
+    encodeBS (BList   bs) = "l" <> foldMap encodeBS bs <> "e"
+    encodeBS (BMap    mp) = "d" <> foldMap encodeKeyPair (toSorted mp) <> "e"
     toSorted :: Ord k => HM.HashMap k v -> [(k, v)]
     toSorted = sortWith fst . HM.toList
     encodeKeyPair :: (ByteString, Bencoding) -> ByteString
-    encodeKeyPair (k, v) = 
-        encodeBS (BString k) <> encodeBS v
+    encodeKeyPair (k, v) = encodeBS (BString k) <> encodeBS v
 
 
-    
+
 -- | Represents Bencoding decoding errors for a bytestring
 newtype DecodeError = DecodeError Text deriving (Eq, Show)
 
@@ -104,10 +100,7 @@ decode (Decoder d) = fmap d . makeDecoderError . AP.parseOnly parse
   where
     makeDecoderError = either (Left . DecodeError . toText) Right
     parse :: AP.Parser Bencoding
-    parse = parseInt
-        <|> (BString <$> parseString)
-        <|> parseList
-        <|> parseMap
+    parse = parseInt <|> (BString <$> parseString) <|> parseList <|> parseMap
     parseInt :: AP.Parser Bencoding
     parseInt = do
         _   <- AP.char 'i'
@@ -116,12 +109,11 @@ decode (Decoder d) = fmap d . makeDecoderError . AP.parseOnly parse
         return (BInt int)
       where
         signedInt :: AP.Parser Int64
-        signedInt = (negate <$> (AP.char '-' *> AP.decimal))
-                <|> AP.decimal
+        signedInt = (negate <$> (AP.char '-' *> AP.decimal)) <|> AP.decimal
     parseString :: AP.Parser ByteString
     parseString = do
-        len    <- AP.decimal
-        _      <- AP.char ':'
+        len <- AP.decimal
+        _   <- AP.char ':'
         AP.take len
     parseList :: AP.Parser Bencoding
     parseList = do

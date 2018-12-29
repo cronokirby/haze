@@ -1,8 +1,8 @@
 module Main where
 
-import Relude
+import           Relude
 
-import Haze (runHaze)
+import           Haze                           ( runHaze )
 
 
 main :: IO ()
