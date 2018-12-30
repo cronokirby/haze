@@ -7,7 +7,7 @@ the communication protocol with trackers. First it
 specificies the data in a .torrent file with MetaInfo,
 then data sent to and returned from a tracker.
 -}
-module Haze.Tracker 
+module Haze.Tracker
     ( Tracker(..)
     , TieredList
     , MD5Sum(..)
@@ -42,23 +42,37 @@ module Haze.Tracker
     )
 where
 
-import Relude
+import           Relude
 
-import Crypto.Hash.SHA1 as SHA1
-import qualified Data.Attoparsec.ByteString as AP
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BSC
-import qualified Data.HashMap.Strict as HM
-import qualified Data.Text as T
-import Data.Time.Clock (UTCTime)
-import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import Network.Socket (HostName, PortNumber)
-import Text.Show (Show(..))
+import           Crypto.Hash.SHA1              as SHA1
+import qualified Data.Attoparsec.ByteString    as AP
+import qualified Data.ByteString               as BS
+import qualified Data.ByteString.Char8         as BSC
+import qualified Data.HashMap.Strict           as HM
+import qualified Data.Text                     as T
+import           Data.Time.Clock                ( UTCTime )
+import           Data.Time.Clock.POSIX          ( posixSecondsToUTCTime )
+import           Network.Socket                 ( HostName
+                                                , PortNumber
+                                                )
+import           Text.Show                      ( Show(..) )
 
-import Data.TieredList (TieredList, makeTieredList, tieredSingleton)
-import Haze.Bencoding (Bencoding(..), Decoder(..), DecodeError(..),
-                       decode, encode, encodeBen)
-import Haze.Bits (Bits, encodeIntegralN, packBytes, parseInt)
+import           Data.TieredList                ( TieredList
+                                                , makeTieredList
+                                                , tieredSingleton
+                                                )
+import           Haze.Bencoding                 ( Bencoding(..)
+                                                , Decoder(..)
+                                                , DecodeError(..)
+                                                , decode
+                                                , encode
+                                                , encodeBen
+                                                )
+import           Haze.Bits                      ( Bits
+                                                , encodeIntegralN
+                                                , packBytes
+                                                , parseInt
+                                                )
 
 
 {- | Represents the URL for a torrent Tracker
@@ -67,8 +81,8 @@ This distinguishes between the different types of
 supported clients. UDPTracker comes with a pre split
 link and port, ready for socket connection.
 -}
-data Tracker 
-    = HTTPTracker !Text 
+data Tracker
+    = HTTPTracker !Text
     | UDPTracker !Text !Text
     | UnknownTracker !Text
     deriving (Show)
@@ -81,11 +95,10 @@ http:// or https:// in the url.
 Will fail completely if none of these is found.
 -}
 trackerFromURL :: Text -> Tracker
-trackerFromURL t
-    | T.isPrefixOf "udp://"   t = udpFromURL t
-    | T.isPrefixOf "http://"  t = HTTPTracker t
-    | T.isPrefixOf "https://" t = HTTPTracker t
-    | otherwise                 = UnknownTracker t
+trackerFromURL t | T.isPrefixOf "udp://" t   = udpFromURL t
+                 | T.isPrefixOf "http://" t  = HTTPTracker t
+                 | T.isPrefixOf "https://" t = HTTPTracker t
+                 | otherwise                 = UnknownTracker t
   where
     udpFromURL t' = fromMaybe (UnknownTracker t) $ do
         unPrefix <- T.stripPrefix "udp://" t'
@@ -104,8 +117,7 @@ newtype SHA1 = SHA1 { getSHA1 :: ByteString } deriving (Show)
 data SHAPieces = SHAPieces Int64 SHA1
 
 instance Show SHAPieces where
-    show (SHAPieces i _) = 
-        "SHAPieces " ++ Relude.show i ++ " (..bytes)"
+    show (SHAPieces i _) = "SHAPieces " ++ Relude.show i ++ " (..bytes)"
 
 {- | Represents the information in the `info` of a metainfo file
 
@@ -113,7 +125,7 @@ A torrent can contain either a single file, or multiple files,
 and what each file contains in the multi file mode is different than
 the single file.
 -}
-data FileInfo 
+data FileInfo
     -- | A single file, with name, length, and md5 sum
     = SingleFile !FilePath !Int64 !(Maybe MD5Sum)
     -- | Multiple files, with directory name
@@ -122,10 +134,9 @@ data FileInfo
 
 -- | Returns the total length of all files in the torrent
 totalFileLength :: FileInfo -> Int64
-totalFileLength (SingleFile _ l _) = l
+totalFileLength (SingleFile _ l _ ) = l
 totalFileLength (MultiFile _ files) = sum $ map itemLength files
-  where
-    itemLength (FileItem _ l _ ) = l
+    where itemLength (FileItem _ l _) = l
 
 
 
@@ -165,22 +176,22 @@ tier with just the given trackers. If the tracker list
 is present, the single tracker is ignored.
 -}
 squashedTrackers :: MetaInfo -> TieredList Tracker
-squashedTrackers MetaInfo{..} = 
+squashedTrackers MetaInfo {..} =
     fromMaybe (tieredSingleton metaAnnounce) metaAnnounceList
 
 
 -- | Try and decode a meta file from a bytestring
 metaFromBytes :: ByteString -> Either DecodeError MetaInfo
-metaFromBytes bs = decode decodeMeta bs 
-    >>= maybe (Left (DecodeError "Bad MetaInfo file")) Right
+metaFromBytes bs =
+    decode decodeMeta bs
+        >>= maybe (Left (DecodeError "Bad MetaInfo file")) Right
 
 -- | Get the total size (bytes) of all the files in a torrent
 totalFileSize :: MetaInfo -> Int64
 totalFileSize meta = case metaFile meta of
     SingleFile _ len _ -> len
     MultiFile _ items  -> sum (map itemLen items)
-  where
-    itemLen (FileItem _ len _) = len
+    where itemLen (FileItem _ len _) = len
 
 
 type BenMap = HM.HashMap ByteString Bencoding
@@ -192,30 +203,29 @@ decodeMeta = Decoder doDecode
         info <- HM.lookup "info" mp
         (metaPieces, metaPrivate, metaFile) <- getInfo info
         let metaInfoHash = SHA1 $ SHA1.hash (encode encodeBen info)
-        announceURL     <- withKey "announce" mp tryText
-        let metaAnnounce = trackerFromURL announceURL
+        announceURL <- withKey "announce" mp tryText
+        let metaAnnounce     = trackerFromURL announceURL
         let metaAnnounceList = getAnnounces "announce-list" mp
-        let metaCreation  = withKey "creation date" mp tryDate
-        let metaComment   = withKey "comment" mp tryText
-        let metaCreatedBy = withKey "created by" mp tryText
-        let metaEncoding  = withKey "encoding" mp tryText
-        return (MetaInfo {..})
-    doDecode _          = Nothing
+        let metaCreation     = withKey "creation date" mp tryDate
+        let metaComment      = withKey "comment" mp tryText
+        let metaCreatedBy    = withKey "created by" mp tryText
+        let metaEncoding     = withKey "encoding" mp tryText
+        return (MetaInfo { .. })
+    doDecode _ = Nothing
     getBool :: ByteString -> BenMap -> Bool
     getBool k mp = case HM.lookup k mp of
         Just (BInt 1) -> True
         _             -> False
     getAnnounces :: ByteString -> BenMap -> Maybe (TieredList Tracker)
-    getAnnounces k mp = 
-        withKey k mp 
+    getAnnounces k mp = withKey
+        k
+        mp
         (fmap makeTieredList . traverse getTrackers <=< tryList)
       where
         getTrackers :: Bencoding -> Maybe [Tracker]
-        getTrackers = 
-            traverse (fmap trackerFromURL . tryText) <=< tryList
+        getTrackers = traverse (fmap trackerFromURL . tryText) <=< tryList
     tryDate :: Bencoding -> Maybe UTCTime
-    tryDate (BInt i) = Just . posixSecondsToUTCTime $
-            fromInteger (toInteger i)
+    tryDate (BInt i) = Just . posixSecondsToUTCTime $ fromInteger (toInteger i)
     tryDate _        = Nothing
     getInfo :: Bencoding -> Maybe (SHAPieces, Bool, FileInfo)
     getInfo (BMap mp) = do
@@ -227,7 +237,7 @@ decodeMeta = Decoder doDecode
             Nothing    -> getSingle mp
             Just files -> getMulti mp files
         return (sha, private, file)
-    getInfo _         = Nothing
+    getInfo _ = Nothing
     getFilePart :: BenMap -> Maybe (Int64, Maybe MD5Sum)
     getFilePart mp = do
         len <- withKey "length" mp tryInt
@@ -243,14 +253,13 @@ decodeMeta = Decoder doDecode
         name  <- withKey "name" mp tryPath
         files <- traverse getFileItem l
         return (MultiFile name files)
-    getMulti _ _         = Nothing
+    getMulti _ _ = Nothing
     getFileItem :: Bencoding -> Maybe FileItem
     getFileItem (BMap mp) = do
         (len, md5) <- getFilePart mp
-        path <- withKey "path" mp
-                (tryList >=> traverse tryPath)
+        path       <- withKey "path" mp (tryList >=> traverse tryPath)
         return (FileItem path len md5)
-    getFileItem _         = Nothing
+    getFileItem _ = Nothing
 
 
 -- | Information sent to the tracker about the state of the request
@@ -289,9 +298,17 @@ data TrackerRequest = TrackerRequest
 
 -- | Constructs the tracker request to be used at the start of a session
 newTrackerRequest :: MetaInfo -> ByteString -> TrackerRequest
-newTrackerRequest meta@MetaInfo{..} peerID = TrackerRequest 
-    metaInfoHash peerID 6881 0 0 (totalFileSize meta) 
-    True ReqStarted Nothing Nothing
+newTrackerRequest meta@MetaInfo {..} peerID = TrackerRequest
+    metaInfoHash
+    peerID
+    6881
+    0
+    0
+    (totalFileSize meta)
+    True
+    ReqStarted
+    Nothing
+    Nothing
 
 updateTransactionID :: Maybe ByteString -> TrackerRequest -> TrackerRequest
 updateTransactionID transID treq = treq { treqTransactionID = transID }
@@ -299,24 +316,25 @@ updateTransactionID transID treq = treq { treqTransactionID = transID }
 
 -- | Encodes a 'TrackerRequest' as query parameters
 trackerQuery :: TrackerRequest -> [(ByteString, Maybe ByteString)]
-trackerQuery TrackerRequest{..} = map (\(a, b) -> (a, Just b)) $
-    [ ("info_hash", getSHA1 treqInfoHash)
-    , ("peer_id", treqPeerID)
-    , ("port", Relude.show treqPort)
-    , ("uploaded", Relude.show treqUploaded)
-    , ("downloaded", Relude.show treqDownloaded)
-    , ("left", Relude.show treqLeft)
-    , ("compact", if treqCompact then "1" else "0")
-    ] ++
-    eventQuery ++
-    maybe [] (\i -> [("numwant", Relude.show i)]) treqNumWant ++
-    maybe [] (\s -> [("trackerid", s)]) treqTransactionID
+trackerQuery TrackerRequest {..} =
+    map (\(a, b) -> (a, Just b))
+        $  [ ("info_hash" , getSHA1 treqInfoHash)
+           , ("peer_id"   , treqPeerID)
+           , ("port"      , Relude.show treqPort)
+           , ("uploaded"  , Relude.show treqUploaded)
+           , ("downloaded", Relude.show treqDownloaded)
+           , ("left"      , Relude.show treqLeft)
+           , ("compact"   , if treqCompact then "1" else "0")
+           ]
+        ++ eventQuery
+        ++ maybe [] (\i -> [("numwant", Relude.show i)]) treqNumWant
+        ++ maybe [] (\s -> [("trackerid", s)])           treqTransactionID
   where
     eventQuery = case treqEvent of
-        ReqStarted -> [("event", "started")]
-        ReqStopped -> [("event", "stopped")]
+        ReqStarted   -> [("event", "started")]
+        ReqStopped   -> [("event", "stopped")]
         ReqCompleted -> [("event", "completed")]
-        ReqEmpty -> []
+        ReqEmpty     -> []
 
 
 {- | A UDP tracker will send this after a connection
@@ -333,18 +351,15 @@ parseUDPConn = do
     return (UDPConnection trans conn)
 
 -- | Represents a request to a UDP tracker
-data UDPTrackerRequest = 
+data UDPTrackerRequest =
     UDPTrackerRequest ByteString TrackerRequest
 
 -- | Construct a new UDP request.
-newUDPRequest :: MetaInfo -> ByteString
-              -> UDPConnection -> UDPTrackerRequest
+newUDPRequest :: MetaInfo -> ByteString -> UDPConnection -> UDPTrackerRequest
 newUDPRequest meta peerID (UDPConnection trans conn) =
     let trackerReq = newTrackerRequest meta peerID
-        withTrans  = trackerReq { 
-            treqTransactionID = Just trans
-        }
-    in UDPTrackerRequest conn withTrans
+        withTrans  = trackerReq { treqTransactionID = Just trans }
+    in  UDPTrackerRequest conn withTrans
 
 -- | Updates the transaction ID in a UDP request
 updateUDPTransID :: ByteString -> UDPTrackerRequest -> UDPTrackerRequest
@@ -358,31 +373,30 @@ updateUDPConnID connID (UDPTrackerRequest _ treq) =
 
 -- | Encodes a UDP request as a bytestring
 encodeUDPRequest :: UDPTrackerRequest -> ByteString
-encodeUDPRequest (UDPTrackerRequest conn TrackerRequest{..}) =
+encodeUDPRequest (UDPTrackerRequest conn TrackerRequest {..}) =
     conn
-    <> "\0\0\0\1"
+        <> "\0\0\0\1"
     -- The upstream tracker won't like this
-    <> fromMaybe "\0\0\0\0" treqTransactionID
-    <> getSHA1 treqInfoHash
-    <> treqPeerID
-    <> pack64 treqDownloaded
-    <> pack64 treqLeft
-    <> pack64 treqUploaded
-    <> pack32 eventNum
+        <> fromMaybe "\0\0\0\0" treqTransactionID
+        <> getSHA1 treqInfoHash
+        <> treqPeerID
+        <> pack64 treqDownloaded
+        <> pack64 treqLeft
+        <> pack64 treqUploaded
+        <> pack32 eventNum
     -- The IP address we hardcode (default)
-    <> "\0\0\0\0"
+        <> "\0\0\0\0"
     -- This should be sufficiently unique
-    <> BS.drop 16 treqPeerID
-    <> pack32 (fromMaybe (-1) treqNumWant)
-    <> packPort treqPort
+        <> BS.drop 16 treqPeerID
+        <> pack32 (fromMaybe (-1) treqNumWant)
+        <> packPort treqPort
   where
     pack64 :: Int64 -> ByteString
     pack64 = BS.pack . encodeIntegralN 8
     pack32 :: (Bits i, Integral i) => i -> ByteString
     pack32 = BS.pack . encodeIntegralN 4
     packPort :: PortNumber -> ByteString
-    packPort p = 
-        BS.drop 2 (pack32 ((fromIntegral p) :: Int))
+    packPort p = BS.drop 2 (pack32 ((fromIntegral p) :: Int))
     eventNum :: Int32
     eventNum = case treqEvent of
         ReqEmpty     -> 0
@@ -409,7 +423,7 @@ data AnnounceInfo = AnnounceInfo
     , annSeeders :: !(Maybe Int)
     -- | The number of peers without the complete file
     , annLeechers :: !(Maybe Int)
-    , annPeers :: ![Peer] 
+    , annPeers :: ![Peer]
     }
     deriving (Show)
 
@@ -431,39 +445,39 @@ send a bytestring without bencoding.
 This parses the bencoded bytestring from HTTP.
 -}
 announceFromHTTP :: ByteString -> Either DecodeError Announce
-announceFromHTTP bs = decode decodeAnnounce bs
-    >>= maybe (Left (DecodeError "Bad Announce Data")) Right
+announceFromHTTP bs =
+    decode decodeAnnounce bs
+        >>= maybe (Left (DecodeError "Bad Announce Data")) Right
 
 
 -- | Decode a bytestring as a list of Peer addresses
 decodeBinaryPeers :: ByteString -> Maybe [Peer]
 decodeBinaryPeers bs
+    |
     -- The bytestring isn't a multiple of 6
-    | BS.length bs `mod` 6 /= 0 = Nothing
-    | otherwise                 =
-        let chunks = makeChunks 6 bs
-            makePeerHost :: ByteString -> String
-            makePeerHost chunk = intercalate "." . map Relude.show $
-                BS.unpack (BS.take 4 chunk)
-            makePeerPort chunk = 
-                -- this is safe because of when we call this
-                packBytes (BS.unpack (BS.drop 4 chunk))
-        in Just $ map (\chunk -> 
-            Peer Nothing 
-            (makePeerHost chunk) 
-            (makePeerPort chunk))
-            chunks
+      BS.length bs `mod` 6 /= 0
+    = Nothing
+    | otherwise
+    = let chunks = makeChunks 6 bs
+          makePeerHost :: ByteString -> String
+          makePeerHost chunk =
+              intercalate "." . map Relude.show $ BS.unpack (BS.take 4 chunk)
+          makePeerPort chunk =
+              -- this is safe because of when we call this
+              packBytes (BS.unpack (BS.drop 4 chunk))
+      in  Just $ map
+              (\chunk -> Peer Nothing (makePeerHost chunk) (makePeerPort chunk))
+              chunks
   where
     makeChunks :: Int -> ByteString -> [ByteString]
     makeChunks size body
         | BS.null body = []
-        | otherwise    = BS.take size body
-                       : makeChunks size (BS.drop size body)
+        | otherwise    = BS.take size body : makeChunks size (BS.drop size body)
 
 -- | Parse Announce information from a UDP tracker
 parseUDPAnnounce :: AP.Parser Announce
 parseUDPAnnounce = do
-    _ <- AP.string "\0\0\0\1"
+    _                <- AP.string "\0\0\0\1"
     annTransactionID <- Just <$> AP.take 4
     let annWarning = Nothing
     annInterval <- parseInt
@@ -472,37 +486,32 @@ parseUDPAnnounce = do
     annSeeders  <- Just <$> parseInt
     rest        <- AP.takeByteString
     case decodeBinaryPeers rest of
-        Nothing -> fail "Failed to decode binary peers"
-        Just annPeers -> 
-            return (GoodAnnounce AnnounceInfo{..})
+        Nothing       -> fail "Failed to decode binary peers"
+        Just annPeers -> return (GoodAnnounce AnnounceInfo { .. })
 
 -- | A Bencoding decoder for the Announce data
 decodeAnnounce :: Decoder (Maybe Announce)
 decodeAnnounce = Decoder doDecode
   where
     doDecode :: Bencoding -> Maybe Announce
-    doDecode (BMap mp) = 
-        case HM.lookup "failure reason" mp of
-            Just (BString s) ->
-                Just (FailedAnnounce (decodeUtf8 s))
-            Nothing          -> do
-                info <- decodeAnnounceInfo mp
-                return (GoodAnnounce info)
-            Just _           ->
-                Nothing
-    doDecode _         = Nothing
+    doDecode (BMap mp) = case HM.lookup "failure reason" mp of
+        Just (BString s) -> Just (FailedAnnounce (decodeUtf8 s))
+        Nothing          -> do
+            info <- decodeAnnounceInfo mp
+            return (GoodAnnounce info)
+        Just _ -> Nothing
+    doDecode _ = Nothing
     decodeAnnounceInfo :: BenMap -> Maybe AnnounceInfo
     decodeAnnounceInfo mp = do
-        let annWarning       = withKey "warning message" mp tryText
-        annInterval         <- withKey "interval" mp tryNum
+        let annWarning = withKey "warning message" mp tryText
+        annInterval <- withKey "interval" mp tryNum
         let annMinInterval   = withKey "min interval" mp tryNum
         let annTransactionID = withKey "tracker id" mp tryBS
         let annSeeders       = withKey "complete" mp tryNum
         let annLeechers      = withKey "incomplete" mp tryNum
-        pInfo               <- HM.lookup "peers" mp
-        annPeers            <- dictPeers pInfo 
-                           <|> binPeers pInfo
-        return (AnnounceInfo {..})
+        pInfo    <- HM.lookup "peers" mp
+        annPeers <- dictPeers pInfo <|> binPeers pInfo
+        return (AnnounceInfo { .. })
     dictPeers :: Bencoding -> Maybe [Peer]
     dictPeers = tryList >=> traverse getPeer
       where
@@ -511,16 +520,15 @@ decodeAnnounce = Decoder doDecode
             let peerID = withKey "peer id" mp tryText
             peerHost <- BSC.unpack <$> withKey "ip" mp tryBS
             peerPort <- withKey "port" mp tryNum
-            return (Peer {..})
-        getPeer _          = Nothing
+            return (Peer { .. })
+        getPeer _ = Nothing
     binPeers :: Bencoding -> Maybe [Peer]
     binPeers (BString bs) = decodeBinaryPeers bs
     binPeers _            = Nothing
 
 {- Decoding utilities -}
 
-withKey :: ByteString -> BenMap 
-        -> (Bencoding -> Maybe a) -> Maybe a
+withKey :: ByteString -> BenMap -> (Bencoding -> Maybe a) -> Maybe a
 withKey k mp next = HM.lookup k mp >>= next
 
 tryInt :: Bencoding -> Maybe Int64
@@ -528,8 +536,7 @@ tryInt (BInt i) = Just i
 tryInt _        = Nothing
 
 tryNum :: Num n => Bencoding -> Maybe n
-tryNum (BInt i) = 
-    Just (fromInteger (toInteger i))
+tryNum (BInt i) = Just (fromInteger (toInteger i))
 tryNum _        = Nothing
 
 tryBS :: Bencoding -> Maybe ByteString
@@ -537,7 +544,7 @@ tryBS (BString bs) = Just bs
 tryBS _            = Nothing
 
 tryPath :: Bencoding -> Maybe FilePath
-tryPath = fmap BSC.unpack  . tryBS
+tryPath = fmap BSC.unpack . tryBS
 
 tryText :: Bencoding -> Maybe Text
 tryText = fmap decodeUtf8 . tryBS
