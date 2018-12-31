@@ -19,16 +19,10 @@ import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
                                                 , parse16
                                                 )
-
-
-{- | Represents the information related to a block we can request
-
-Contains index, offset, and block length.
--}
-data BlockInfo = BlockInfo Int Int Int deriving (Eq, Show)
-
-instance Hashable BlockInfo where
-    hashWithSalt i (BlockInfo a b c) = hashWithSalt i [a, b, c]
+import           Haze.PieceBuffer               ( BlockInfo(..)
+                                                , BlockIndex(..)
+                                                , makeBlockInfo
+                                                )
 
 
 -- | The messages sent between peers in a torrent
@@ -56,7 +50,7 @@ data Message
     The first 2 bytes represent the piece index and byte offset.
     The final part is the actual bytes constituting the block.
     -}
-    | RecvBlock !Int !Int !ByteString
+    | RecvBlock !BlockIndex !ByteString
     -- | The send is no longer requesting a block
     | Cancel !BlockInfo
     -- | The port this peer's DHT is listening on
@@ -74,7 +68,7 @@ encodeMessage m = case m of
     UnInterested  -> BS.pack $ encInt 1 ++ [3]
     Have    i     -> BS.pack $ encInt 5 ++ [4] ++ encInt i
     Request block -> BS.pack $ encInt 13 ++ [6] ++ encBlock block
-    RecvBlock a b block ->
+    RecvBlock (BlockIndex a b) block ->
         let len = BS.length block
         in  BS.pack (encInt (len + 9) ++ [7] ++ encInt a ++ encInt b) <> block
     Cancel block -> BS.pack $ encInt 13 ++ [8] ++ encBlock block
@@ -83,7 +77,7 @@ encodeMessage m = case m of
     encInt :: Int -> [Word8]
     encInt = encodeIntegralN 4
     encBlock :: BlockInfo -> [Word8]
-    encBlock (BlockInfo a b c) = foldMap encInt [a, b, c]
+    encBlock (BlockInfo (BlockIndex a b) c) = foldMap encInt [a, b, c]
 
 
 {- | Parse a message encoded as as string of bytes
@@ -103,12 +97,12 @@ parseMessage = do
     parseID 1  2 = return Interested
     parseID 1  3 = return UnInterested
     parseID 5  4 = Have <$> parseInt
-    parseID 13 6 = Request <$> liftA3 BlockInfo parseInt parseInt parseInt
-    parseID 13 8 = Cancel <$> liftA3 BlockInfo parseInt parseInt parseInt
+    parseID 13 6 = Request <$> liftA3 makeBlockInfo parseInt parseInt parseInt
+    parseID 13 8 = Cancel <$> liftA3 makeBlockInfo parseInt parseInt parseInt
     parseID 3  9 = Port <$> parse16
     parseID ln 7 = do
         index <- parseInt
         begin <- parseInt
         let blockLen = ln - 9
-        RecvBlock index begin <$> AP.take blockLen
+        RecvBlock (BlockIndex index begin) <$> AP.take blockLen
     parseID _ _ = fail "Unrecognised ID, or bad length"

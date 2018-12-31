@@ -27,6 +27,7 @@ library
                        Haze.Bits
                        Haze.Client
                        Haze.Peer
+                       Haze.PieceBuffer
                        Haze.Tracker
                        Data.TieredList
   ghc-options:         -Wall

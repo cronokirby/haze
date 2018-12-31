@@ -8,10 +8,13 @@ import qualified Hedgehog.Range                as Range
 import           Test.Hspec
 
 import           Haze.Bencoding
-import           Haze.Peer                      ( BlockInfo(..)
-                                                , Message(..)
+import           Haze.Peer                      ( Message(..)
                                                 , encodeMessage
                                                 , parseMessage
+                                                )
+import           Haze.PieceBuffer               ( BlockIndex(..)
+                                                , BlockInfo
+                                                , makeBlockInfo
                                                 )
 
 
@@ -71,11 +74,11 @@ messageSpec =
         shouldParse "\0\0\0\1\3"         UnInterested
         shouldParse "\0\0\0\5\4\0\0\0\9" (Have 9)
         shouldParse "\0\0\0\13\6\0\0\0\9\0\0\0\9\0\0\0\9"
-            $ Request (BlockInfo 9 9 9)
+            $ Request (makeBlockInfo 9 9 9)
         shouldParse "\0\0\0\13\8\0\0\0\9\0\0\0\9\0\0\0\9"
-            $ Cancel (BlockInfo 9 9 9)
+            $ Cancel (makeBlockInfo 9 9 9)
         shouldParse "\0\0\0\3\9\1\0" (Port 256)
-        shouldParse "\0\0\0\10\7\0\0\0\9\0\0\0\9A" $ RecvBlock 9 9 "A"
+        shouldParse "\0\0\0\10\7\0\0\0\9\0\0\0\9A" $ RecvBlock (BlockIndex 9 9) "A"
     where shouldParse bs res = parseOnly parseMessage bs `shouldBe` Right res
 
 
@@ -119,11 +122,13 @@ propMessage = property $ do
         , Port <$> Gen.integral_ (Range.linear 0 100)
         , Request <$> genBlockInfo
         , Cancel <$> genBlockInfo
-        , liftA3 RecvBlock genInt genInt genBS
+        , liftA2 RecvBlock genBlockIndex genBS
         ]
     genInt :: MonadGen m => m Int
     genInt = Gen.int (Range.linear 0 100)
     genBS :: MonadGen m => m ByteString
     genBS = Gen.bytes (Range.linear 0 32)
+    genBlockIndex :: MonadGen m => m BlockIndex
+    genBlockIndex = liftA2 BlockIndex genInt genInt
     genBlockInfo :: MonadGen m => m BlockInfo
-    genBlockInfo = liftA3 BlockInfo genInt genInt genInt
+    genBlockInfo = liftA3 makeBlockInfo genInt genInt genInt

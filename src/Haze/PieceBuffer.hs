@@ -8,7 +8,10 @@ and to be able to fill with pieces. The data structure should also
 let us save to a file.
 -}
 module Haze.PieceBuffer
-    ()
+    ( BlockIndex(..)
+    , BlockInfo(..)
+    , makeBlockInfo
+    )
 where
 
 import           Relude
@@ -26,8 +29,12 @@ import           Haze.Tracker                   ( SHAPieces(..)
 -- | The size of a piece composing the torrent
 type PieceSize = Int64
 
--- | The size of a block composing a piece
-type BlockSize = Int64
+{- | The size of a block composing a piece
+
+Blocks are 32 bit ints in size as specified by the p2p
+protocol
+-}
+type BlockSize = Int
 
 
 -- | Represents a buffer of pieces composing the file(s) to download
@@ -92,5 +99,27 @@ The block size can be set when constructing a piece buffer
 -}
 makePiece :: BlockSize -> PieceSize -> Piece
 makePiece blockSize pieceSize =
-    let maxBlockIndex = fromIntegral $ div pieceSize blockSize
+    let maxBlockIndex = fromIntegral $ div pieceSize (fromIntegral blockSize)
     in  Incomplete . listArray (0, maxBlockIndex) $ repeat FreeBlock
+
+
+-- | Represents the index locating a block in the buffer
+data BlockIndex = BlockIndex
+    { blockPiece :: !Int -- ^ The index of the piece this is in
+    , blockOffset :: !Int -- ^ The offset of this block inside the piece
+    }
+    deriving (Eq, Show)
+
+-- | Represents the information about a block peers send to eachother
+data BlockInfo = BlockInfo
+    { blockIndex :: !BlockIndex -- ^ The location of this block
+    , blockSize :: !BlockSize -- ^ How big this block is
+    }
+    deriving (Eq, Show)
+
+{- | Construct a block info from the 3 pieces of information composing it
+
+This is useful when parsing the structure off the wire.
+-}
+makeBlockInfo :: Int -> Int -> BlockSize -> BlockInfo
+makeBlockInfo piece offset = BlockInfo (BlockIndex piece offset)
