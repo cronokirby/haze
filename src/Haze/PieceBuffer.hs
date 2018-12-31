@@ -43,9 +43,11 @@ data Piece
     | Incomplete !(Array Int Block)
 
 
--- | Represents a block of data sub dividing a piece
--- Blocks are the unit of data actually downloaded from peers,
--- and thus are the unit of data a peer can stake a claim on.
+{- | Represents a block of data sub dividing a piece
+
+Blocks are the unit of data actually downloaded from peers,
+and thus are the unit of data a peer can stake a claim on.
+-}
 data Block
     -- | An empty block no one has tagged
     = FreeBlock
@@ -55,10 +57,12 @@ data Block
     | FullBlock !ByteString
 
 
--- | Construct a piece buffer from total size, piece size, and block size
--- This exists mainly as a tool for testing the implementation of piece buffers.
--- usually you want to make a piece buffer corresponding to the configuration
--- of an actual torrent file, in which case 'makePieceBuffer' should be used
+{- | Construct a piece buffer from total size, piece size, and block size
+
+This exists mainly as a tool for testing the implementation of piece buffers.
+usually you want to make a piece buffer corresponding to the configuration
+of an actual torrent file, in which case 'makePieceBuffer' should be used
+-}
 sizedPieceBuffer :: Int64 -> SHAPieces -> BlockSize -> PieceBuffer
 sizedPieceBuffer totalSize shaPieces@(SHAPieces pieceSize _) blockSize =
     let pieces        = makePiece blockSize <$> chunkSizes totalSize pieceSize
@@ -70,18 +74,22 @@ sizedPieceBuffer totalSize shaPieces@(SHAPieces pieceSize _) blockSize =
     chunkSizes total size =
         let (d, m) = divMod total size in replicate (fromIntegral d) d ++ [m]
 
--- | Construct a piece buffer given a block size and a torrent file
--- The block size controls the size of each downloadable chunk inside
--- of an individual piece composing the data to download. Usually
--- the default in this module should use.
+{- | Construct a piece buffer given a block size and a torrent file
+
+The block size controls the size of each downloadable chunk inside
+of an individual piece composing the data to download. Usually
+the default in this module should use.
+-}
 makePieceBuffer :: BlockSize -> MetaInfo -> PieceBuffer
 makePieceBuffer blockSize MetaInfo {..} =
     let totalLength = totalFileLength metaFile
     in  sizedPieceBuffer totalLength metaPieces blockSize
 
--- Construct a new piece given the piece size, and the block size
--- Each piece in a torrent has the same size, except for the last one.
--- The block size can be set when constructing a piece buffer
+{- Construct a new piece given the piece size, and the block size
+
+Each piece in a torrent has the same size, except for the last one.
+The block size can be set when constructing a piece buffer
+-}
 makePiece :: BlockSize -> PieceSize -> Piece
 makePiece blockSize pieceSize =
     let maxBlockIndex = fromIntegral $ div pieceSize blockSize
