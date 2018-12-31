@@ -112,9 +112,12 @@ newtype MD5Sum = MD5Sum ByteString deriving (Show)
 -- | Represents a 20 byte SHA1 hash
 newtype SHA1 = SHA1 { getSHA1 :: ByteString } deriving (Show)
 
--- | Represents the concatenation of multiple SHA pieces.
--- The integer represents the length of each piece
-data SHAPieces = SHAPieces Int64 SHA1
+{- | Represents the concatenation of multiple SHA pieces.
+
+The integer represents the length of each piece, and the bytestring
+the concatenation of all the SHA1 hashes
+-}
+data SHAPieces = SHAPieces Int64 ByteString
 
 instance Show SHAPieces where
     show (SHAPieces i _) = "SHAPieces " ++ Relude.show i ++ " (..bytes)"
@@ -231,7 +234,7 @@ decodeMeta = Decoder doDecode
     getInfo (BMap mp) = do
         let private = getBool "private" mp
         pieceLen  <- withKey "piece length" mp tryInt
-        pieceHash <- SHA1 <$> withKey "pieces" mp tryBS
+        pieceHash <- withKey "pieces" mp tryBS
         let sha = SHAPieces pieceLen pieceHash
         file <- case HM.lookup "files" mp of
             Nothing    -> getSingle mp

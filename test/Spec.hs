@@ -15,13 +15,17 @@ import           Haze.Peer                      ( Message(..)
 import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , BlockInfo
                                                 , makeBlockInfo
+                                                , sizedPieceBuffer
+                                                , nextBlock
                                                 )
+import           Haze.Tracker                   ( SHAPieces(..) )
 
 
 main :: IO ()
 main = do
     hspec bencodingSpec
     hspec messageSpec
+    hspec pieceBufferSpec
     propertyTests
 
 
@@ -78,8 +82,23 @@ messageSpec =
         shouldParse "\0\0\0\13\8\0\0\0\9\0\0\0\9\0\0\0\9"
             $ Cancel (makeBlockInfo 9 9 9)
         shouldParse "\0\0\0\3\9\1\0" (Port 256)
-        shouldParse "\0\0\0\10\7\0\0\0\9\0\0\0\9A" $ RecvBlock (BlockIndex 9 9) "A"
+        shouldParse "\0\0\0\10\7\0\0\0\9\0\0\0\9A"
+            $ RecvBlock (BlockIndex 9 9) "A"
     where shouldParse bs res = parseOnly parseMessage bs `shouldBe` Right res
+
+
+pieceBufferSpec :: SpecWith ()
+pieceBufferSpec = describe "PieceBuffer.nextBlock" $ do
+    it "should fetch the first available block"
+        $ nextBlockShouldBe 0 (Just (makeBlockInfo 0 0 1))
+    it "should return Nothing for invalid indices" $ do
+        nextBlockShouldBe 100 Nothing
+        nextBlockShouldBe (-1) Nothing
+        nextBlockShouldBe 2 Nothing
+  where
+    nextBlockShouldBe piece target =
+        fst (nextBlock piece theBuffer) `shouldBe` target
+    theBuffer = sizedPieceBuffer 1 (SHAPieces 1 "These bytes don't matter") 1
 
 
 propertyTests :: IO ()

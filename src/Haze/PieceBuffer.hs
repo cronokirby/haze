@@ -11,19 +11,38 @@ module Haze.PieceBuffer
     ( BlockIndex(..)
     , BlockInfo(..)
     , makeBlockInfo
+    , PieceBuffer
+    , makePieceBuffer
+    , sizedPieceBuffer
+    , nextBlock
     )
 where
 
 import           Relude
 
 import           Data.Array                     ( Array
+                                                , (!)
+                                                , (//)
+                                                , assocs
+                                                , bounds
                                                 , listArray
+                                                )
+import           Data.Ix                        ( Ix
+                                                , inRange
                                                 )
 
 import           Haze.Tracker                   ( SHAPieces(..)
                                                 , MetaInfo(..)
                                                 , totalFileLength
                                                 )
+
+
+safeGet :: Ix i => Array i a -> i -> Maybe a
+safeGet arr i | inRange (bounds arr) i = Just (arr ! i)
+              | otherwise              = Nothing
+
+putArr :: Ix i => i -> a -> Array i a -> Array i a
+putArr ix val arr = arr // [(ix, val)]
 
 
 -- | The size of a piece composing the torrent
@@ -38,7 +57,7 @@ type BlockSize = Int
 
 
 -- | Represents a buffer of pieces composing the file(s) to download
-data PieceBuffer = PieceBuffer !SHAPieces !(Array Int Piece)
+data PieceBuffer = PieceBuffer !SHAPieces !BlockSize !(Array Int Piece) deriving (Show)
 
 -- | Represents one of the pieces composing 
 data Piece
@@ -48,6 +67,7 @@ data Piece
     | Complete !ByteString
     -- | An incomplete set of blocks composing a this piece
     | Incomplete !(Array Int Block)
+    deriving (Show)
 
 
 {- | Represents a block of data sub dividing a piece
@@ -62,6 +82,7 @@ data Block
     | TaggedBlock
     -- | A fully downloaded block
     | FullBlock !ByteString
+    deriving (Eq, Show)
 
 
 {- | Construct a piece buffer from total size, piece size, and block size
@@ -73,13 +94,17 @@ of an actual torrent file, in which case 'makePieceBuffer' should be used
 sizedPieceBuffer :: Int64 -> SHAPieces -> BlockSize -> PieceBuffer
 sizedPieceBuffer totalSize shaPieces@(SHAPieces pieceSize _) blockSize =
     let pieces        = makePiece blockSize <$> chunkSizes totalSize pieceSize
-        maxPieceIndex = fromIntegral $ div totalSize pieceSize
+        maxPieceIndex = fromIntegral (div totalSize pieceSize) - 1
         pieceArr      = listArray (0, maxPieceIndex) pieces
-    in  PieceBuffer shaPieces pieceArr
+    in  PieceBuffer shaPieces blockSize pieceArr
   where
     chunkSizes :: Integral a => a -> a -> [a]
     chunkSizes total size =
-        let (d, m) = divMod total size in replicate (fromIntegral d) d ++ [m]
+        let (d, m) = divMod total size 
+            append = case m of
+                0 -> []
+                p -> [p]
+        in replicate (fromIntegral d) d ++ append
 
 {- | Construct a piece buffer given a block size and a torrent file
 
@@ -99,7 +124,7 @@ The block size can be set when constructing a piece buffer
 -}
 makePiece :: BlockSize -> PieceSize -> Piece
 makePiece blockSize pieceSize =
-    let maxBlockIndex = fromIntegral $ div pieceSize (fromIntegral blockSize)
+    let maxBlockIndex = fromIntegral (div pieceSize (fromIntegral blockSize)) - 1
     in  Incomplete . listArray (0, maxBlockIndex) $ repeat FreeBlock
 
 
@@ -123,3 +148,26 @@ This is useful when parsing the structure off the wire.
 -}
 makeBlockInfo :: Int -> Int -> BlockSize -> BlockInfo
 makeBlockInfo piece offset = BlockInfo (BlockIndex piece offset)
+
+
+{- | Acquire and tag the next block in a piecebuffer
+
+Returns Nothing if no block is free in that piece, or that piece
+doesn't exist.
+-}
+nextBlock :: Int -> PieceBuffer -> (Maybe BlockInfo, PieceBuffer)
+nextBlock piece buf@(PieceBuffer sha blockSize pieces) =
+    maybe (Nothing, buf) (\(a, s) -> (Just a, s)) $ do
+        blocks   <- getIncompletePiece pieces piece
+        blockIdx <- findFreeBlock blocks
+        let blocks' = putArr blockIdx TaggedBlock blocks
+            pieces' = putArr piece (Incomplete blocks') pieces
+            blockInfo = makeBlockInfo piece (blockIdx * blockSize) blockSize
+        return (blockInfo, PieceBuffer sha blockSize pieces')
+  where
+    getIncompletePiece :: Array Int Piece -> Int -> Maybe (Array Int Block)
+    getIncompletePiece arr ix = case safeGet arr ix of
+        Just (Incomplete blocks) -> Just blocks
+        _                        -> Nothing
+    findFreeBlock :: Array Int Block -> Maybe Int
+    findFreeBlock = fmap fst . find ((== FreeBlock) . snd) . assocs
