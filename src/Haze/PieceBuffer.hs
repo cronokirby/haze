@@ -100,11 +100,11 @@ sizedPieceBuffer totalSize shaPieces@(SHAPieces pieceSize _) blockSize =
   where
     chunkSizes :: Integral a => a -> a -> [a]
     chunkSizes total size =
-        let (d, m) = divMod total size 
+        let (d, m) = divMod total size
             append = case m of
                 0 -> []
                 p -> [p]
-        in replicate (fromIntegral d) d ++ append
+        in  replicate (fromIntegral d) d ++ append
 
 {- | Construct a piece buffer given a block size and a torrent file
 
@@ -124,7 +124,8 @@ The block size can be set when constructing a piece buffer
 -}
 makePiece :: BlockSize -> PieceSize -> Piece
 makePiece blockSize pieceSize =
-    let maxBlockIndex = fromIntegral (div pieceSize (fromIntegral blockSize)) - 1
+    let maxBlockIndex =
+            fromIntegral (div pieceSize (fromIntegral blockSize)) - 1
     in  Incomplete . listArray (0, maxBlockIndex) $ repeat FreeBlock
 
 
@@ -160,8 +161,8 @@ nextBlock piece buf@(PieceBuffer sha blockSize pieces) =
     maybe (Nothing, buf) (\(a, s) -> (Just a, s)) $ do
         blocks   <- getIncompletePiece pieces piece
         blockIdx <- findFreeBlock blocks
-        let blocks' = putArr blockIdx TaggedBlock blocks
-            pieces' = putArr piece (Incomplete blocks') pieces
+        let blocks'   = putArr blockIdx TaggedBlock blocks
+            pieces'   = putArr piece (Incomplete blocks') pieces
             blockInfo = makeBlockInfo piece (blockIdx * blockSize) blockSize
         return (blockInfo, PieceBuffer sha blockSize pieces')
   where

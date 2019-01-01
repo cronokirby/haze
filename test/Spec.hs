@@ -89,12 +89,15 @@ messageSpec =
 
 pieceBufferSpec :: SpecWith ()
 pieceBufferSpec = describe "PieceBuffer.nextBlock" $ do
-    it "should fetch the first available block"
+    it "fetches the first available block"
         $ nextBlockShouldBe 0 (Just (makeBlockInfo 0 0 1))
-    it "should return Nothing for invalid indices" $ do
+    it "returns Nothing for invalid indices" $ do
         nextBlockShouldBe 100 Nothing
         nextBlockShouldBe (-1) Nothing
         nextBlockShouldBe 2 Nothing
+    it "returns Nothing when fetching the same block again" $
+        let (_, buffer') = nextBlock 0 theBuffer
+        in fst (nextBlock 0 buffer') `shouldBe` Nothing
   where
     nextBlockShouldBe piece target =
         fst (nextBlock piece theBuffer) `shouldBe` target
