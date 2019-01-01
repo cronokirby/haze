@@ -117,7 +117,7 @@ newtype SHA1 = SHA1 { getSHA1 :: ByteString } deriving (Show)
 The integer represents the length of each piece, and the bytestring
 the concatenation of all the SHA1 hashes
 -}
-data SHAPieces = SHAPieces Int64 ByteString
+data SHAPieces = SHAPieces Int64 ByteString deriving (Eq)
 
 instance Show SHAPieces where
     show (SHAPieces i _) = "SHAPieces " ++ Relude.show i ++ " (..bytes)"

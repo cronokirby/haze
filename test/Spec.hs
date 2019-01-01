@@ -18,6 +18,7 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , sizedPieceBuffer
                                                 , nextBlock
                                                 , correctBlockSize
+                                                , bufferBytes
                                                 )
 import           Haze.Tracker                   ( SHAPieces(..) )
 
@@ -107,6 +108,9 @@ pieceBufferSpec = do
         it "returns False when the block size doesn't match" $ do
             correctBlockSize "" oneBuffer `shouldBe` False
             correctBlockSize "Too Long" oneBuffer `shouldBe` False
+    describe "PieceBuffer.bufferBytes" $
+        it "returns just underscores for an empty buffer" $
+            bufferBytes oneBuffer `shouldBe` "_"
   where
     nextBlockShouldBe piece target =
         fst (nextBlock piece oneBuffer) `shouldBe` target

@@ -17,7 +17,7 @@ module Haze.PieceBuffer
     , nextBlock
     , correctBlockSize
     , writeBlock
-    , chunkSizes
+    , bufferBytes
     )
 where
 
@@ -31,7 +31,7 @@ import           Data.Array                     ( Array
                                                 , elems
                                                 , listArray
                                                 )
-import qualified Data.ByteString               as BS
+import qualified Data.ByteString.Char8         as BS
 import           Data.Ix                        ( Ix
                                                 , inRange
                                                 )
@@ -62,7 +62,8 @@ type BlockSize = Int
 
 
 -- | Represents a buffer of pieces composing the file(s) to download
-data PieceBuffer = PieceBuffer !SHAPieces !BlockSize !(Array Int Piece) deriving (Show)
+data PieceBuffer = PieceBuffer !SHAPieces !BlockSize !(Array Int Piece)
+    deriving (Eq, Show)
 
 -- | Represents one of the pieces composing 
 data Piece
@@ -72,7 +73,7 @@ data Piece
     | Complete !ByteString
     -- | An incomplete set of blocks composing a this piece
     | Incomplete !(Array Int Block)
-    deriving (Show)
+    deriving (Eq, Show)
 
 
 {- | Represents a block of data sub dividing a piece
@@ -107,14 +108,15 @@ sizedPieceBuffer totalSize shaPieces@(SHAPieces pieceSize _) blockSize =
         maxPieceIndex = fromIntegral (div totalSize pieceSize) - 1
         pieceArr      = listArray (0, maxPieceIndex) pieces
     in  PieceBuffer shaPieces blockSize pieceArr
+  where
+    chunkSizes :: Integral a => a -> a -> [a]
+    chunkSizes total size =
+        let (d, m) = divMod total size
+            append = case m of
+                0 -> []
+                p -> [p]
+        in  replicate (fromIntegral d) size ++ append
 
-chunkSizes :: Integral a => a -> a -> [a]
-chunkSizes total size =
-    let (d, m) = divMod total size
-        append = case m of
-            0 -> []
-            p -> [p]
-    in  replicate (fromIntegral d) size ++ append
 {- | Construct a piece buffer given a block size and a torrent file
 
 The block size controls the size of each downloadable chunk inside
@@ -217,9 +219,31 @@ writeBlock BlockIndex {..} block buf@(PieceBuffer sha blockSize pieces) =
     isEmpty :: Int -> Array Int Block -> Bool
     isEmpty blockIdx blocks = case safeGet blocks blockIdx of
         Just TaggedBlock -> True
-        Just FreeBlock   -> True 
+        Just FreeBlock   -> True
         _                -> False
     completePiece :: Array Int Block -> Piece
     completePiece blocks =
         let allBytes = traverse fullBlock (elems blocks)
         in  maybe (Incomplete blocks) (Complete . mconcat) allBytes
+
+
+{- | Represent the piece buffer as a full bytestring.
+
+This could be very large! This is useful mainly for testing and
+debugging. This function also ignores file boundaries.
+
+This only displays complete pieces, and not the blocks inside of them.
+
+Since this is used for debugging, empty portions are represented as
+"_", and saved portions as "s".
+-}
+bufferBytes :: PieceBuffer -> ByteString
+bufferBytes (PieceBuffer (SHAPieces pieceSize _) _ pieces) = foldMap
+    pieceBytes
+    (elems pieces)
+  where
+    size = fromIntegral pieceSize
+    pieceBytes :: Piece -> ByteString
+    pieceBytes Saved           = BS.replicate size 's'
+    pieceBytes (Complete   bs) = bs
+    pieceBytes (Incomplete _ ) = BS.replicate size '_'
