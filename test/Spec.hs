@@ -18,6 +18,7 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , sizedPieceBuffer
                                                 , nextBlock
                                                 , correctBlockSize
+                                                , writeBlock
                                                 , bufferBytes
                                                 )
 import           Haze.Tracker                   ( SHAPieces(..) )
@@ -98,7 +99,7 @@ pieceBufferSpec = do
             nextBlockShouldBe 100  Nothing
             nextBlockShouldBe (-1) Nothing
             nextBlockShouldBe 2    Nothing
-        it "returns Nothing when fetching the same block again"
+        it "returns Nothing when fetching a full piece"
             $ let (_, buffer') = nextBlock 0 oneBuffer
               in  fst (nextBlock 0 buffer') `shouldBe` Nothing
     describe "PieceBuffer.correctSize" $ do
@@ -108,13 +109,26 @@ pieceBufferSpec = do
         it "returns False when the block size doesn't match" $ do
             correctBlockSize "" oneBuffer `shouldBe` False
             correctBlockSize "Too Long" oneBuffer `shouldBe` False
-    describe "PieceBuffer.bufferBytes" $
-        it "returns just underscores for an empty buffer" $
-            bufferBytes oneBuffer `shouldBe` "_"
+    describe "PieceBuffer.bufferBytes"
+        $ it "returns just underscores for an empty buffer"
+        $ do
+              oneBuffer `bytesShouldBe` "_"
+              bigBuffer `bytesShouldBe` "____"
+    describe "PieceBuffer.writeBlock" $ do
+        let buffer1 = writeBlock (BlockIndex 0 0) "1" bigBuffer
+            buffer2 = writeBlock (BlockIndex 0 1) "2" buffer1
+        it "lets up fill up a piece" $ do
+            buffer1 `bytesShouldBe` "____"
+            buffer2 `bytesShouldBe` "12__"
+        it "does nothing if the piece is already written" $ do
+            writeBlock (BlockIndex 0 0) "X" buffer2 `bytesShouldBe` "12__"
+            writeBlock (BlockIndex 0 10) "X" buffer2 `bytesShouldBe` "12__"
   where
     nextBlockShouldBe piece target =
         fst (nextBlock piece oneBuffer) `shouldBe` target
+    bytesShouldBe buf target = bufferBytes buf `shouldBe` target
     oneBuffer = sizedPieceBuffer 1 (SHAPieces 1 "These bytes don't matter") 1
+    bigBuffer = sizedPieceBuffer 4 (SHAPieces 2 "BB") 1
 
 
 propertyTests :: IO ()
