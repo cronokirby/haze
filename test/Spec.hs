@@ -18,7 +18,6 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , sizedPieceBuffer
                                                 , nextBlock
                                                 , correctBlockSize
-                                                , writeBlock
                                                 )
 import           Haze.Tracker                   ( SHAPieces(..) )
 
