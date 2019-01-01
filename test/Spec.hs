@@ -17,6 +17,8 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , makeBlockInfo
                                                 , sizedPieceBuffer
                                                 , nextBlock
+                                                , correctBlockSize
+                                                , writeBlock
                                                 )
 import           Haze.Tracker                   ( SHAPieces(..) )
 
@@ -88,20 +90,28 @@ messageSpec =
 
 
 pieceBufferSpec :: SpecWith ()
-pieceBufferSpec = describe "PieceBuffer.nextBlock" $ do
-    it "fetches the first available block"
-        $ nextBlockShouldBe 0 (Just (makeBlockInfo 0 0 1))
-    it "returns Nothing for invalid indices" $ do
-        nextBlockShouldBe 100 Nothing
-        nextBlockShouldBe (-1) Nothing
-        nextBlockShouldBe 2 Nothing
-    it "returns Nothing when fetching the same block again" $
-        let (_, buffer') = nextBlock 0 theBuffer
-        in fst (nextBlock 0 buffer') `shouldBe` Nothing
+pieceBufferSpec = do
+    describe "PieceBuffer.nextBlock" $ do
+        it "fetches the first available block"
+            $ nextBlockShouldBe 0 (Just (makeBlockInfo 0 0 1))
+        it "returns Nothing for invalid indices" $ do
+            nextBlockShouldBe 100  Nothing
+            nextBlockShouldBe (-1) Nothing
+            nextBlockShouldBe 2    Nothing
+        it "returns Nothing when fetching the same block again"
+            $ let (_, buffer') = nextBlock 0 oneBuffer
+              in  fst (nextBlock 0 buffer') `shouldBe` Nothing
+    describe "PieceBuffer.correctSize" $ do
+        it "returns True only if the block size matches" $ do
+            correctBlockSize "1" oneBuffer `shouldBe` True
+            correctBlockSize "A" oneBuffer `shouldBe` True
+        it "returns False when the block size doesn't match" $ do
+            correctBlockSize "" oneBuffer `shouldBe` False
+            correctBlockSize "Too Long" oneBuffer `shouldBe` False
   where
     nextBlockShouldBe piece target =
-        fst (nextBlock piece theBuffer) `shouldBe` target
-    theBuffer = sizedPieceBuffer 1 (SHAPieces 1 "These bytes don't matter") 1
+        fst (nextBlock piece oneBuffer) `shouldBe` target
+    oneBuffer = sizedPieceBuffer 1 (SHAPieces 1 "These bytes don't matter") 1
 
 
 propertyTests :: IO ()

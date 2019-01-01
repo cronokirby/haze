@@ -15,6 +15,9 @@ module Haze.PieceBuffer
     , makePieceBuffer
     , sizedPieceBuffer
     , nextBlock
+    , correctBlockSize
+    , writeBlock
+    , chunkSizes
     )
 where
 
@@ -25,8 +28,10 @@ import           Data.Array                     ( Array
                                                 , (//)
                                                 , assocs
                                                 , bounds
+                                                , elems
                                                 , listArray
                                                 )
+import qualified Data.ByteString               as BS
 import           Data.Ix                        ( Ix
                                                 , inRange
                                                 )
@@ -84,6 +89,11 @@ data Block
     | FullBlock !ByteString
     deriving (Eq, Show)
 
+-- | Return True of the block is full of data
+fullBlock :: Block -> Maybe ByteString
+fullBlock (FullBlock bs) = Just bs
+fullBlock _              = Nothing
+
 
 {- | Construct a piece buffer from total size, piece size, and block size
 
@@ -97,15 +107,14 @@ sizedPieceBuffer totalSize shaPieces@(SHAPieces pieceSize _) blockSize =
         maxPieceIndex = fromIntegral (div totalSize pieceSize) - 1
         pieceArr      = listArray (0, maxPieceIndex) pieces
     in  PieceBuffer shaPieces blockSize pieceArr
-  where
-    chunkSizes :: Integral a => a -> a -> [a]
-    chunkSizes total size =
-        let (d, m) = divMod total size
-            append = case m of
-                0 -> []
-                p -> [p]
-        in  replicate (fromIntegral d) d ++ append
 
+chunkSizes :: Integral a => a -> a -> [a]
+chunkSizes total size =
+    let (d, m) = divMod total size
+        append = case m of
+            0 -> []
+            p -> [p]
+    in  replicate (fromIntegral d) size ++ append
 {- | Construct a piece buffer given a block size and a torrent file
 
 The block size controls the size of each downloadable chunk inside
@@ -151,7 +160,7 @@ makeBlockInfo :: Int -> Int -> BlockSize -> BlockInfo
 makeBlockInfo piece offset = BlockInfo (BlockIndex piece offset)
 
 
-{- | Acquire and tag the next block in a piecebuffer
+{- | Acquire and tag the next block in a piece
 
 Returns Nothing if no block is free in that piece, or that piece
 doesn't exist.
@@ -172,3 +181,45 @@ nextBlock piece buf@(PieceBuffer sha blockSize pieces) =
         _                        -> Nothing
     findFreeBlock :: Array Int Block -> Maybe Int
     findFreeBlock = fmap fst . find ((== FreeBlock) . snd) . assocs
+
+{- | Check if a sequences of bytes is the correct size
+
+This is something you'd want to do before writing the block,
+to potentially disconnect from a misbehaving client.
+-}
+correctBlockSize :: ByteString -> PieceBuffer -> Bool
+correctBlockSize bytes (PieceBuffer _ blockSize _) =
+    BS.length bytes == blockSize
+
+{- | Write the data associated with a block to the buffer.
+
+Any data longer than the block size of the piece buffer will be discarded.
+Clients should check 
+This acts as a NoOp if that block is already written.
+In theory, no one should write to the same block twice anyways,
+if 'nextBlock' is used correctly, since each block will be tagged,
+so multiple processes won't jump on the same block.
+-}
+writeBlock :: BlockIndex -> ByteString -> PieceBuffer -> PieceBuffer
+writeBlock BlockIndex {..} block buf@(PieceBuffer sha blockSize pieces) =
+    fromMaybe buf $ do
+        blocks <- incompleteBlocks
+        let blockIdx = blockOffset `div` blockSize
+        guard (isEmpty blockIdx blocks)
+        let blocks' = putArr blockIdx (FullBlock block) blocks
+            pieces' = putArr blockPiece (completePiece blocks') pieces
+        return (PieceBuffer sha blockSize pieces')
+  where
+    incompleteBlocks :: Maybe (Array Int Block)
+    incompleteBlocks = case safeGet pieces blockPiece of
+        Just (Incomplete blocks) -> Just blocks
+        _                        -> Nothing
+    isEmpty :: Int -> Array Int Block -> Bool
+    isEmpty blockIdx blocks = case safeGet blocks blockIdx of
+        Just TaggedBlock -> True
+        Just FreeBlock   -> True 
+        _                -> False
+    completePiece :: Array Int Block -> Piece
+    completePiece blocks =
+        let allBytes = traverse fullBlock (elems blocks)
+        in  maybe (Incomplete blocks) (Complete . mconcat) allBytes
