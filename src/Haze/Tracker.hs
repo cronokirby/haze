@@ -44,7 +44,7 @@ where
 
 import           Relude
 
-import           Crypto.Hash.SHA1              as SHA1
+import qualified Crypto.Hash.SHA1              as SHA1
 import qualified Data.Attoparsec.ByteString    as AP
 import qualified Data.ByteString               as BS
 import qualified Data.ByteString.Char8         as BSC
@@ -55,6 +55,13 @@ import           Data.Time.Clock.POSIX          ( posixSecondsToUTCTime )
 import           Network.Socket                 ( HostName
                                                 , PortNumber
                                                 )
+import           Path                           ( Path
+                                                , Rel
+                                                , File
+                                                , Dir
+                                                , (</>)
+                                                )
+import qualified Path
 import           Text.Show                      ( Show(..) )
 
 import           Data.TieredList                ( TieredList
@@ -130,9 +137,9 @@ the single file.
 -}
 data FileInfo
     -- | A single file, with name, length, and md5 sum
-    = SingleFile !FilePath !Int64 !(Maybe MD5Sum)
+    = SingleFile !(Path Rel File) !Int64 !(Maybe MD5Sum)
     -- | Multiple files, with directory name
-    |  MultiFile !FilePath ![FileItem]
+    |  MultiFile !(Path Rel Dir) ![FileItem]
     deriving (Show)
 
 -- | Returns the total length of all files in the torrent
@@ -150,7 +157,7 @@ from the 'SingleFile' branch of 'FileInfo'. Notably, instead of
 having a name, it instead has a list of strings representing
 the full file path, which must be respected.
 -}
-data FileItem = FileItem ![FilePath] !Int64 !(Maybe MD5Sum) deriving (Show)
+data FileItem = FileItem !(Path Rel File) !Int64 !(Maybe MD5Sum) deriving (Show)
 
 {- | Represents the information in a .torrent file
 
@@ -248,18 +255,24 @@ decodeMeta = Decoder doDecode
     getSingle mp = do
         name       <- withKey "name" mp tryPath
         (len, md5) <- getFilePart mp
-        return (SingleFile name len md5)
+        path       <- Path.parseRelFile name
+        return (SingleFile path len md5)
     getMulti :: BenMap -> Bencoding -> Maybe FileInfo
     getMulti mp (BList l) = do
         name  <- withKey "name" mp tryPath
         files <- traverse getFileItem l
-        return (MultiFile name files)
+        dir   <- Path.parseRelDir name
+        return (MultiFile dir files)
     getMulti _ _ = Nothing
     getFileItem :: Bencoding -> Maybe FileItem
     getFileItem (BMap mp) = do
         (len, md5) <- getFilePart mp
-        path       <- withKey "path" mp (tryList >=> traverse tryPath)
-        return (FileItem path len md5)
+        rawParts   <- withKey "path" mp tryList
+        strings    <- traverse tryPath rawParts >>= nonEmpty
+        dirs       <- traverse Path.parseRelDir (init strings)
+        file       <- Path.parseRelFile (last strings)
+        let joinedPath = foldr (</>) file dirs
+        return (FileItem joinedPath len md5)
     getFileItem _ = Nothing
 
 
