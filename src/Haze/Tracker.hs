@@ -139,7 +139,7 @@ data FileInfo
     -- | A single file, with name, length, and md5 sum
     = SingleFile !(Path Rel File) !Int64 !(Maybe MD5Sum)
     -- | Multiple files, with directory name
-    |  MultiFile !(Path Rel Dir) ![FileItem]
+    | MultiFile !(Path Rel Dir) ![FileItem]
     deriving (Show)
 
 -- | Returns the total length of all files in the torrent
