@@ -220,10 +220,8 @@ decodeMeta = Decoder doDecode
         Just (BInt 1) -> True
         _             -> False
     getAnnounces :: ByteString -> BenMap -> Maybe (TieredList Tracker)
-    getAnnounces k mp = withKey
-        k
-        mp
-        (fmap makeTieredList . traverse getTrackers <=< tryList)
+    getAnnounces k mp = makeTieredList
+        <$> withKey k mp (traverse getTrackers <=< tryList)
       where
         getTrackers :: Bencoding -> Maybe [Tracker]
         getTrackers = traverse (fmap trackerFromURL . tryText) <=< tryList
