@@ -153,9 +153,10 @@ totalFileLength (MultiFile _ files) = sum $ map itemLength files
 {- | A single file in a multi file torrent
 
 Note that the information in this datatype is slightly different
-from the 'SingleFile' branch of 'FileInfo'. Notably, instead of
-having a name, it instead has a list of strings representing
-the full file path, which must be respected.
+from the 'SingleFile' branch of 'FileInfo'.
+The Raw representation is a list of paths, but we concatenate
+and verify the validity of those as an actual relative file path
+during parsing. For example ["dir", "file.ext"] will become "dir/file.ext"
 -}
 data FileItem = FileItem !(Path Rel File) !Int64 !(Maybe MD5Sum) deriving (Show)
 
@@ -466,27 +467,22 @@ announceFromHTTP bs =
 
 -- | Decode a bytestring as a list of Peer addresses
 decodeBinaryPeers :: ByteString -> Maybe [Peer]
-decodeBinaryPeers bs
-    |
-    -- The bytestring isn't a multiple of 6
-      BS.length bs `mod` 6 /= 0
-    = Nothing
-    | otherwise
-    = let chunks = makeChunks 6 bs
-          makePeerHost :: ByteString -> String
-          makePeerHost chunk =
-              intercalate "." . map Relude.show $ BS.unpack (BS.take 4 chunk)
-          makePeerPort chunk =
-              -- this is safe because of when we call this
-              packBytes (BS.unpack (BS.drop 4 chunk))
-      in  Just $ map
-              (\chunk -> Peer Nothing (makePeerHost chunk) (makePeerPort chunk))
-              chunks
+decodeBinaryPeers bs | BS.length bs `mod` 6 /= 0 = Nothing
+                     | otherwise = Just . map makeHostAndPort $ makeChunks 6 bs
   where
     makeChunks :: Int -> ByteString -> [ByteString]
     makeChunks size body
         | BS.null body = []
         | otherwise    = BS.take size body : makeChunks size (BS.drop size body)
+    makePeerHost :: ByteString -> String
+    makePeerHost chunk =
+        intercalate "." . map Relude.show $ BS.unpack (BS.take 4 chunk)
+    makePeerPort :: ByteString -> PortNumber
+    makePeerPort chunk =
+        -- this is safe because of when we call this
+        packBytes (BS.unpack (BS.drop 4 chunk))
+    makeHostAndPort :: ByteString -> Peer
+    makeHostAndPort chnk = Peer Nothing (makePeerHost chnk) (makePeerPort chnk)
 
 -- | Parse Announce information from a UDP tracker
 parseUDPAnnounce :: AP.Parser Announce
