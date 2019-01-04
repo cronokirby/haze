@@ -124,9 +124,13 @@ pieceBufferSpec = do
             writeBlock (BlockIndex 0 0) "X" buffer2 `bytesShouldBe` "12__"
             writeBlock (BlockIndex 0 1) "X" buffer2 `bytesShouldBe` "12__"
         it "does not change the length of a piece" $ do
-            let awkward1 = writeBlock (BlockIndex 0 0) "XX" awkwardBuffer
-                awkward2 = writeBlock (BlockIndex 0 2) "YY" awkward1
-            awkward2 `bytesShouldBe` "XXY"
+            let awkward1 = writeBlock (BlockIndex 0 0) "12" awkwardBuffer
+                awkward2 = writeBlock (BlockIndex 0 2) "34" awkward1
+            awkward2 `bytesShouldBe` "123"
+        it "can handle the final piece of a buffer" $ do
+            let buffer  = sizedPieceBuffer 3 (SHAPieces 2 "") 2
+                written = writeBlock (BlockIndex 1 0) "12" buffer
+            written `bytesShouldBe` "__1"
   where
     nextBlockShouldBe piece target =
         fst (nextBlock piece oneBuffer) `shouldBe` target
