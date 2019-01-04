@@ -16,7 +16,6 @@ module Haze.PieceBuffer
     , makePieceBuffer
     , sizedPieceBuffer
     , nextBlock
-    , correctBlockSize
     , writeBlock
     , bufferBytes
     )
@@ -227,15 +226,6 @@ nextBlock piece buf@(PieceBuffer sha blockSize pieces) =
         _                        -> Nothing
     findFreeBlock :: Array Int SizedBlock -> Maybe (Int, SizedBlock)
     findFreeBlock = find ((== FreeBlock) . getSizedBlock . snd) . assocs
-
-{- | Check if a sequences of bytes is the correct size
-
-This is something you'd want to do before writing the block,
-to potentially disconnect from a misbehaving client.
--}
-correctBlockSize :: ByteString -> PieceBuffer -> Bool
-correctBlockSize bytes (PieceBuffer _ blockSize _) =
-    BS.length bytes == blockSize
 
 {- | Write the data associated with a block to the buffer.
 

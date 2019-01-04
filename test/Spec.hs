@@ -17,7 +17,6 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , makeBlockInfo
                                                 , sizedPieceBuffer
                                                 , nextBlock
-                                                , correctBlockSize
                                                 , writeBlock
                                                 , bufferBytes
                                                 )
@@ -102,13 +101,6 @@ pieceBufferSpec = do
         it "returns Nothing when fetching a full piece"
             $ let (_, buffer') = nextBlock 0 oneBuffer
               in  fst (nextBlock 0 buffer') `shouldBe` Nothing
-    describe "PieceBuffer.correctSize" $ do
-        it "returns True only if the block size matches" $ do
-            correctBlockSize "1" oneBuffer `shouldBe` True
-            correctBlockSize "A" oneBuffer `shouldBe` True
-        it "returns False when the block size doesn't match" $ do
-            correctBlockSize "" oneBuffer `shouldBe` False
-            correctBlockSize "Too Long" oneBuffer `shouldBe` False
     describe "PieceBuffer.bufferBytes"
         $ it "returns just underscores for an empty buffer"
         $ do
