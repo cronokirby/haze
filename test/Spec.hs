@@ -1,6 +1,7 @@
 import           Relude
 
 import           Data.Attoparsec.ByteString     ( parseOnly )
+import qualified Data.ByteString               as BS
 import qualified Data.HashMap.Strict           as HM
 import           Hedgehog
 import qualified Hedgehog.Gen                  as Gen
@@ -42,12 +43,13 @@ bencodingSpec = do
         it "can encode lists" $ do
             doEncode (BList [BInt 1, BInt 2]) `shouldBe` "li1ei2ee"
             doEncode (BList [BString "a", BString "b"]) `shouldBe` "l1:a1:be"
-        it "can encode nested lists"
-            $          doEncode (BList [BList [BInt 1], BList [BInt 1]])
-            `shouldBe` "lli1eeli1eee"
-        it "can encode hashmaps"
-            $          doEncode (BMap $ HM.fromList [("A", BInt 1)])
-            `shouldBe` "d1:Ai1ee"
+        it "can encode nested lists" $ do
+            doEncode (BList [BList []]) `shouldBe` "llee"
+            doEncode (BList [BList [BInt 1], BList [BInt 1]])
+                `shouldBe` "lli1eeli1eee"
+        it "can encode hashmaps" $ do
+            doEncode (BMap HM.empty) `shouldBe` "de"
+            doEncode (BMap $ HM.fromList [("A", BInt 1)]) `shouldBe` "d1:Ai1ee"
         it "encodes hashmaps with sorted keys"
             $ doEncode (BMap $ HM.fromList [("B", BInt 2), ("A", BInt 1)])
             `shouldBe` "d1:Ai1e1:Bi2ee"
@@ -101,11 +103,14 @@ pieceBufferSpec = do
         it "returns Nothing when fetching a full piece"
             $ let (_, buffer') = nextBlock 0 oneBuffer
               in  fst (nextBlock 0 buffer') `shouldBe` Nothing
-    describe "PieceBuffer.bufferBytes"
-        $ it "returns just underscores for an empty buffer"
-        $ do
-              oneBuffer `bytesShouldBe` "_"
-              bigBuffer `bytesShouldBe` "____"
+    describe "PieceBuffer.bufferBytes" $ do
+        it "returns a bytestring with the same length as the buffer" $ do
+            BS.length (bufferBytes oneBuffer) `shouldBe` 1
+            BS.length (bufferBytes awkwardBuffer) `shouldBe` 3
+            BS.length (bufferBytes bigBuffer) `shouldBe` 4
+        it "returns just underscores for an empty buffer" $ do
+            oneBuffer `bytesShouldBe` "_"
+            bigBuffer `bytesShouldBe` "____"
     describe "PieceBuffer.writeBlock" $ do
         let buffer1 = writeBlock (BlockIndex 0 0) "1" bigBuffer
             buffer2 = writeBlock (BlockIndex 0 1) "2" buffer1
