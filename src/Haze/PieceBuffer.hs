@@ -77,7 +77,6 @@ data Piece
     deriving (Eq, Show)
 
 
-
 {- | Represents something that may be normally sized, or specially sized
 
 This type is generic mainly to be able to derive Functor, but is 
