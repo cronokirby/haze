@@ -122,13 +122,18 @@ pieceBufferSpec = do
             buffer2 `bytesShouldBe` "12__"
         it "does nothing if the piece is already written" $ do
             writeBlock (BlockIndex 0 0) "X" buffer2 `bytesShouldBe` "12__"
-            writeBlock (BlockIndex 0 10) "X" buffer2 `bytesShouldBe` "12__"
+            writeBlock (BlockIndex 0 1) "X" buffer2 `bytesShouldBe` "12__"
+        it "does not change the length of a piece" $ do
+            let awkward1 = writeBlock (BlockIndex 0 0) "XX" awkwardBuffer
+                awkward2 = writeBlock (BlockIndex 0 2) "YY" awkward1
+            awkward2 `bytesShouldBe` "XXY"
   where
     nextBlockShouldBe piece target =
         fst (nextBlock piece oneBuffer) `shouldBe` target
     bytesShouldBe buf target = bufferBytes buf `shouldBe` target
     oneBuffer = sizedPieceBuffer 1 (SHAPieces 1 "These bytes don't matter") 1
     bigBuffer = sizedPieceBuffer 4 (SHAPieces 2 "BB") 1
+    awkwardBuffer = sizedPieceBuffer 3 (SHAPieces 3 "__") 2
 
 
 propertyTests :: IO ()
