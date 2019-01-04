@@ -107,7 +107,7 @@ pieceBufferSpec = do
         it "returns False when the offset doesn't match" $ do
             shouldNotMatch (BlockIndex 0 1) "____"
             shouldNotMatch (BlockIndex 0 9) "1234" 
-        it "returns False when the byte lenght doesn't match" $ do
+        it "returns False when the byte length doesn't match" $ do
             shouldNotMatch (BlockIndex 0 0) ""
             shouldNotMatch (BlockIndex 0 0) "TOO LONG"
     describe "PieceBuffer.nextBlock" $ do
