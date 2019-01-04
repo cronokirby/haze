@@ -117,17 +117,19 @@ getSize normalSize sized = case sized of
     NormalSized _       -> normalSize
     SpecialSized size _ -> size
 
--- | Return True of the block is full of data
-fullBlock :: Block -> Maybe ByteString
-fullBlock (FullBlock bs) = Just bs
-fullBlock _              = Nothing
+-- | Try and extract out the bytes composing a block
+getFullBlock :: SizedBlock -> Maybe ByteString
+getFullBlock = getFullBytes . getSizedBlock
+  where
+    getFullBytes (FullBlock bs) = Just bs
+    getFullBytes _              = Nothing
 
 {- | Fill a size block, truncating the ByteString if necessary
 
 Returns 'Nothing' if the block was already full.
 -}
 fillTruncated :: ByteString -> BlockSize -> SizedBlock -> Maybe SizedBlock
-fillTruncated bytes blockSize block = case block of
+fillTruncated bytes blockSize sized = case sized of
     NormalSized b       -> NormalSized <$> write blockSize b
     SpecialSized size b -> SpecialSized size <$> write size b
   where
@@ -262,7 +264,7 @@ writeBlock BlockIndex {..} bytes buf@(PieceBuffer sha blockSize pieces) =
         _                        -> Nothing
     completePiece :: Array Int SizedBlock -> Piece
     completePiece blocks =
-        let allBytes = traverse (fullBlock . getSizedBlock) (elems blocks)
+        let allBytes = traverse getFullBlock (elems blocks)
         in  maybe (Incomplete blocks) (Complete . mconcat) allBytes
 
 
