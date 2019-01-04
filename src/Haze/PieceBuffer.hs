@@ -12,6 +12,7 @@ module Haze.PieceBuffer
     ( BlockIndex(..)
     , BlockInfo(..)
     , makeBlockInfo
+    , blockInfoMatches
     , PieceBuffer
     , makePieceBuffer
     , sizedPieceBuffer
@@ -202,6 +203,15 @@ This is useful when parsing the structure off the wire.
 -}
 makeBlockInfo :: Int -> Int -> BlockSize -> BlockInfo
 makeBlockInfo piece offset = BlockInfo (BlockIndex piece offset)
+
+{- | Returns true if a received block matches its description
+
+This is useful for peers to check that they received a block corresponding
+to their expectations.
+-}
+blockInfoMatches :: BlockInfo -> BlockIndex -> ByteString -> Bool
+blockInfoMatches BlockInfo {..} index bytes = 
+    index == blockIndex && BS.length bytes == blockSize
 
 
 {- | Acquire and tag the next block in a piece

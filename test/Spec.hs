@@ -16,6 +16,7 @@ import           Haze.Peer                      ( Message(..)
 import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , BlockInfo
                                                 , makeBlockInfo
+                                                , blockInfoMatches
                                                 , sizedPieceBuffer
                                                 , nextBlock
                                                 , writeBlock
@@ -93,6 +94,22 @@ messageSpec =
 
 pieceBufferSpec :: SpecWith ()
 pieceBufferSpec = do
+    describe "PieceBuffer.blockInfoMatches" $ do
+        let info = makeBlockInfo 0 0 4
+            shouldMatch x bs = blockInfoMatches info x bs `shouldBe` True
+            shouldNotMatch x bs = blockInfoMatches info x bs `shouldBe` False
+        it "returns True when everything matches" $ do
+            shouldMatch (BlockIndex 0 0) "1234"
+            shouldMatch (BlockIndex 0 0) "____"
+        it "returns False when the index doesn't match" $ do
+            shouldNotMatch (BlockIndex 1 0) "1234"
+            shouldNotMatch (BlockIndex 9 0) "____"
+        it "returns False when the offset doesn't match" $ do
+            shouldNotMatch (BlockIndex 0 1) "____"
+            shouldNotMatch (BlockIndex 0 9) "1234" 
+        it "returns False when the byte lenght doesn't match" $ do
+            shouldNotMatch (BlockIndex 0 0) ""
+            shouldNotMatch (BlockIndex 0 0) "TOO LONG"
     describe "PieceBuffer.nextBlock" $ do
         it "fetches the first available block"
             $ nextBlockShouldBe 0 (Just (makeBlockInfo 0 0 1))
