@@ -240,7 +240,9 @@ nextBlock piece buf@(PieceBuffer sha blockSize pieces) =
 {- | Write the data associated with a block to the buffer.
 
 Any data longer than the block size of the piece buffer will be discarded.
-Clients should check 
+Clients should check that block that they received matches their expectations
+before calling this function.
+
 This acts as a NoOp if that block is already written.
 In theory, no one should write to the same block twice anyways,
 if 'nextBlock' is used correctly, since each block will be tagged,
