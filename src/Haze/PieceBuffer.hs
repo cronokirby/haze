@@ -18,6 +18,7 @@ module Haze.PieceBuffer
     , sizedPieceBuffer
     , nextBlock
     , writeBlock
+    , saveCompletePieces
     , bufferBytes
     )
 where
@@ -210,7 +211,7 @@ This is useful for peers to check that they received a block corresponding
 to their expectations.
 -}
 blockInfoMatches :: BlockInfo -> BlockIndex -> ByteString -> Bool
-blockInfoMatches BlockInfo {..} index bytes = 
+blockInfoMatches BlockInfo {..} index bytes =
     index == blockIndex && BS.length bytes == blockSize
 
 
@@ -267,6 +268,25 @@ writeBlock BlockIndex {..} bytes buf@(PieceBuffer sha blockSize pieces) =
     completePiece blocks =
         let allBytes = traverse getFullBlock (elems blocks)
         in  maybe (Incomplete blocks) (Complete . mconcat) allBytes
+
+
+{- | Take out all complete pieces from the buffer.
+
+The main utility in this function is in saving the piece buffer to disk.
+This function returns a list of (pieceIndex, bytes) ready to save,
+and removes these pieces from the buffer itself.
+-}
+saveCompletePieces :: PieceBuffer -> ([(Int, ByteString)], PieceBuffer)
+saveCompletePieces (PieceBuffer sha size pieces) =
+    let extractPiece (i, p) = (,) i <$> getComplete p
+        complete = catMaybes $ extractPiece <$> assocs pieces
+        pieces' = pieces // map (\(i, _) -> (i, Saved)) complete
+        buffer' = PieceBuffer sha size pieces'
+    in (complete, buffer')
+  where
+    getComplete :: Piece -> Maybe ByteString
+    getComplete (Complete bytes) = Just bytes
+    getComplete _                = Nothing
 
 
 {- | Represent the piece buffer as a full bytestring.
