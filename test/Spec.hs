@@ -20,6 +20,7 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , sizedPieceBuffer
                                                 , nextBlock
                                                 , writeBlock
+                                                , saveCompletePieces
                                                 , bufferBytes
                                                 )
 import           Haze.Tracker                   ( SHAPieces(..) )
@@ -106,7 +107,7 @@ pieceBufferSpec = do
             shouldNotMatch (BlockIndex 9 0) "____"
         it "returns False when the offset doesn't match" $ do
             shouldNotMatch (BlockIndex 0 1) "____"
-            shouldNotMatch (BlockIndex 0 9) "1234" 
+            shouldNotMatch (BlockIndex 0 9) "1234"
         it "returns False when the byte length doesn't match" $ do
             shouldNotMatch (BlockIndex 0 0) ""
             shouldNotMatch (BlockIndex 0 0) "TOO LONG"
@@ -129,14 +130,12 @@ pieceBufferSpec = do
             oneBuffer `bytesShouldBe` "_"
             bigBuffer `bytesShouldBe` "____"
     describe "PieceBuffer.writeBlock" $ do
-        let buffer1 = writeBlock (BlockIndex 0 0) "1" bigBuffer
-            buffer2 = writeBlock (BlockIndex 0 1) "2" buffer1
         it "lets up fill up a piece" $ do
-            buffer1 `bytesShouldBe` "____"
-            buffer2 `bytesShouldBe` "12__"
+            bigBuffer1 `bytesShouldBe` "____"
+            bigBuffer2 `bytesShouldBe` "12__"
         it "does nothing if the piece is already written" $ do
-            writeBlock (BlockIndex 0 0) "X" buffer2 `bytesShouldBe` "12__"
-            writeBlock (BlockIndex 0 1) "X" buffer2 `bytesShouldBe` "12__"
+            writeBlock (BlockIndex 0 0) "X" bigBuffer2 `bytesShouldBe` "12__"
+            writeBlock (BlockIndex 0 1) "X" bigBuffer2 `bytesShouldBe` "12__"
         it "does not change the length of a piece" $ do
             let awkward1 = writeBlock (BlockIndex 0 0) "12" awkwardBuffer
                 awkward2 = writeBlock (BlockIndex 0 2) "34" awkward1
@@ -145,13 +144,24 @@ pieceBufferSpec = do
             let buffer  = sizedPieceBuffer 3 (SHAPieces 2 "") 2
                 written = writeBlock (BlockIndex 1 0) "12" buffer
             written `bytesShouldBe` "__1"
+    describe "PieceBuffer.saveCompletePieces" $ do
+        let (pieces1, buf1) = saveCompletePieces bigBuffer2
+            (pieces2, buf2) = saveCompletePieces bigBuffer1
+        it "will replace the pieces by saved bytes" $ do
+            buf1 `bytesShouldBe` "ss__"
+            buf2 `bytesShouldBe` "____"
+        it "will return just the pieces that are complete" $ do
+            pieces1 `shouldBe` [(0, "12")]
+            pieces2 `shouldBe` []
   where
     nextBlockShouldBe piece target =
         fst (nextBlock piece oneBuffer) `shouldBe` target
     bytesShouldBe buf target = bufferBytes buf `shouldBe` target
-    oneBuffer = sizedPieceBuffer 1 (SHAPieces 1 "These bytes don't matter") 1
-    bigBuffer = sizedPieceBuffer 4 (SHAPieces 2 "BB") 1
-    awkwardBuffer = sizedPieceBuffer 3 (SHAPieces 3 "__") 2
+    oneBuffer     = sizedPieceBuffer 1 (SHAPieces 1 "") 1
+    awkwardBuffer = sizedPieceBuffer 3 (SHAPieces 3 "") 2
+    bigBuffer     = sizedPieceBuffer 4 (SHAPieces 2 "") 1
+    bigBuffer1    = writeBlock (BlockIndex 0 0) "1" bigBuffer
+    bigBuffer2    = writeBlock (BlockIndex 0 1) "2" bigBuffer1
 
 
 propertyTests :: IO ()
