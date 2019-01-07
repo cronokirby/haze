@@ -20,6 +20,10 @@ module Haze.PieceBuffer
     , writeBlock
     , saveCompletePieces
     , bufferBytes
+    , HasPieceBuffer
+    , nextBlockM
+    , writeBlockM
+    , saveCompletePiecesM
     )
 where
 
@@ -280,9 +284,9 @@ saveCompletePieces :: PieceBuffer -> ([(Int, ByteString)], PieceBuffer)
 saveCompletePieces (PieceBuffer sha size pieces) =
     let extractPiece (i, p) = (,) i <$> getComplete p
         complete = catMaybes $ extractPiece <$> assocs pieces
-        pieces' = pieces // map (\(i, _) -> (i, Saved)) complete
-        buffer' = PieceBuffer sha size pieces'
-    in (complete, buffer')
+        pieces'  = pieces // map (\(i, _) -> (i, Saved)) complete
+        buffer'  = PieceBuffer sha size pieces'
+    in  (complete, buffer')
   where
     getComplete :: Piece -> Maybe ByteString
     getComplete (Complete bytes) = Just bytes
@@ -309,3 +313,31 @@ bufferBytes (PieceBuffer (SHAPieces pieceSize _) _ pieces) = foldMap
     pieceBytes Saved           = BS.replicate size 's'
     pieceBytes (Complete   bs) = bs
     pieceBytes (Incomplete _ ) = BS.replicate size '_'
+
+
+
+-- Utility function to apply a stateful function to a TVar
+stateTVar :: MonadIO m => (s -> (a, s)) -> TVar s -> m a
+stateTVar f var = atomically $ do
+    s <- readTVar var
+    let (a, s') = f s
+    writeTVar var $! s'
+    return a
+
+
+-- | Represents a class of contexts in which we have access to a piecebuffer
+class HasPieceBuffer m where
+    getPieceBuffer :: m (TVar PieceBuffer)
+
+-- | Get and tag the next block of a piece from a shared buffer
+nextBlockM :: (MonadIO m, HasPieceBuffer m) => Int -> m (Maybe BlockInfo)
+nextBlockM piece = getPieceBuffer >>= stateTVar (nextBlock piece)
+
+-- | Commit a block to a shared buffer
+writeBlockM :: (MonadIO m, HasPieceBuffer m) => BlockIndex -> ByteString -> m ()
+writeBlockM index bytes = do
+    var <- getPieceBuffer
+    atomically $ modifyTVar' var (writeBlock index bytes) 
+
+saveCompletePiecesM :: (MonadIO m, HasPieceBuffer m) => m [(Int, ByteString)]
+saveCompletePiecesM = getPieceBuffer >>= stateTVar saveCompletePieces
