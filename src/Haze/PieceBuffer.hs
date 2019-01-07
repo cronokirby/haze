@@ -339,5 +339,6 @@ writeBlockM index bytes = do
     var <- getPieceBuffer
     atomically $ modifyTVar' var (writeBlock index bytes) 
 
+-- | Save the completed pieces to the shared buffer
 saveCompletePiecesM :: (MonadIO m, HasPieceBuffer m) => m [(Int, ByteString)]
 saveCompletePiecesM = getPieceBuffer >>= stateTVar saveCompletePieces
