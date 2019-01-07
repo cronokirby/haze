@@ -13,8 +13,8 @@ where
 
 import           Relude
 
-import Data.Array (Array, (!), array)
-import Path (Path, File, (</>), (<.>), fromRelFile, parseRelFile)
+import Data.Array (Array, (!), listArray)
+import Path (Path, Rel, File, (</>), (<.>), fromRelFile, parseRelFile)
 
 import           Haze.Tracker                   ( FileInfo(..)
                                                 , SHAPieces(..)
@@ -31,16 +31,14 @@ for the piece ending "fileB".
 -}
 writePieces :: MonadIO m => FileInfo -> SHAPieces -> [(Int, ByteString)] -> m ()
 writePieces (SingleFile path fileLength _) (SHAPieces pieceSize _) pieces = do
-    piecePaths <- forM [0..maxPiece] $ liftIO $ parseRel
-  where
-    makePiecePath :: Int -> Path Rel File ->
-    let maxPiece = fileLength `div` pieceSize
-
-        pieceNames = array (0, maxPiece) 
-                    ["piece-" ++ show i ++ ".bin" | i <- [0..maxPiece]]
+    let maxPiece = fromIntegral $ fileLength `div` pieceSize
+    -- this shouldn't ever throw
+    paths <- forM [0..maxPiece] makePiecePath
+    let piecePaths = listArray (0, maxPiece) paths
     forM_ pieces $ \(piece, bytes) -> do
-        -- This really shouldn't ever throw
-        piecePath <- liftIO $ parseRelFile ("piece-" ++ show piece ++ ".bin")
-        writeFileBS (fromRelFile piecePath) bytes
-    
-    
+        writeFileBS (fromRelFile (piecePaths ! piece)) bytes
+  where
+    makePiecePath :: MonadIO m => Int -> m (Path Rel File)
+    makePiecePath piece =
+        liftIO . parseRelFile $ "piece-" ++ show piece ++ ".bin"
+   
