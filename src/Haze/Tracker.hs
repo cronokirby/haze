@@ -137,18 +137,19 @@ the single file.
 -}
 data FileInfo
     -- | A single file, with name, length, and md5 sum
-    = SingleFile !(Path Rel File) !Int64 !(Maybe MD5Sum)
+    = SingleFile !FileItem
     -- | Multiple files, with directory name
     | MultiFile !(Path Rel Dir) ![FileItem]
     deriving (Show)
 
 -- | Returns the total length of all files in the torrent
 totalFileLength :: FileInfo -> Int64
-totalFileLength (SingleFile _ l _ ) = l
-totalFileLength (MultiFile _ files) = sum $ map itemLength files
-    where itemLength (FileItem _ l _) = l
-
-
+totalFileLength fileInfo = case fileInfo of
+    SingleFile item   -> itemLength item
+    MultiFile _ items -> sum $ map itemLength items
+  where
+    itemLength :: FileItem -> Int64
+    itemLength (FileItem _ l _) = l
 
 {- | A single file in a multi file torrent
 
@@ -159,6 +160,7 @@ and verify the validity of those as an actual relative file path
 during parsing. For example ["dir", "file.ext"] will become "dir/file.ext"
 -}
 data FileItem = FileItem !(Path Rel File) !Int64 !(Maybe MD5Sum) deriving (Show)
+
 
 {- | Represents the information in a .torrent file
 
@@ -199,10 +201,7 @@ metaFromBytes bs =
 
 -- | Get the total size (bytes) of all the files in a torrent
 totalFileSize :: MetaInfo -> Int64
-totalFileSize meta = case metaFile meta of
-    SingleFile _ len _ -> len
-    MultiFile _ items  -> sum (map itemLen items)
-    where itemLen (FileItem _ len _) = len
+totalFileSize meta = totalFileLength $ metaFile meta
 
 
 type BenMap = HM.HashMap ByteString Bencoding
@@ -257,7 +256,7 @@ decodeMeta = Decoder doDecode
         name       <- withKey "name" mp tryPath
         (len, md5) <- getFilePart mp
         path       <- Path.parseRelFile name
-        return (SingleFile path len md5)
+        return (SingleFile (FileItem path len md5))
     getMulti :: BenMap -> Bencoding -> Maybe FileInfo
     getMulti mp (BList l) = do
         name  <- withKey "name" mp tryPath
