@@ -153,8 +153,6 @@ totalFileLength fileInfo = case fileInfo of
 
 {- | A single file in a multi file torrent
 
-Note that the information in this datatype is slightly different
-from the 'SingleFile' branch of 'FileInfo'.
 The Raw representation is a list of paths, but we concatenate
 and verify the validity of those as an actual relative file path
 during parsing. For example ["dir", "file.ext"] will become "dir/file.ext"
