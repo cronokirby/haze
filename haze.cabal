@@ -41,6 +41,7 @@ library
                      , http-types           >= 0.12 && < 0.13
                      , network              >= 2.8  && < 2.9
                      , path                 >= 0.6  && < 0.7
+                     , path-io              >= 1.4  && < 1.5
                      , relude               >= 0.4  && < 0.5
                      , safe-exceptions      >= 0.1  && < 0.2
                      , stm                  >= 2.5  && < 2.6

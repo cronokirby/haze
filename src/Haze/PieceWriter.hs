@@ -13,10 +13,18 @@ where
 
 import           Relude
 
-import Data.Array (Array, (!), listArray)
-import Path (Path, Rel, File, (</>), (<.>), fromRelFile, parseRelFile)
+import           Data.Array                     ( (!)
+                                                , listArray
+                                                )
+import           Path                           ( Path
+                                                , Rel
+                                                , File
+                                                )
+import qualified Path                          
+import qualified Path.IO                       as Path
 
 import           Haze.Tracker                   ( FileInfo(..)
+                                                , FileItem(..)
                                                 , SHAPieces(..)
                                                 )
 
@@ -30,15 +38,17 @@ For pieces that overlap between 2 files, the piece is saved in
 for the piece ending "fileB". 
 -}
 writePieces :: MonadIO m => FileInfo -> SHAPieces -> [(Int, ByteString)] -> m ()
-writePieces (SingleFile path fileLength _) (SHAPieces pieceSize _) pieces = do
-    let maxPiece = fromIntegral $ (fileLength - 1) `div` pieceSize
+writePieces (SingleFile item) (SHAPieces pieceSize _) pieces = do
+    let (FileItem path fileLength _) = item
+        maxPiece = fromIntegral $ (fileLength - 1) `div` pieceSize
     -- this shouldn't ever throw
-    paths <- forM [0..maxPiece] makePiecePath
+    paths <- forM [0 .. maxPiece] makePiecePath
     let piecePaths = listArray (0, maxPiece) paths
     forM_ pieces $ \(piece, bytes) -> do
-        writeFileBS (fromRelFile (piecePaths ! piece)) bytes
+        writeFileBS (Path.fromRelFile (piecePaths ! piece)) bytes
+    allPieces <- allM Path.doesFileExist paths
+    return ()
   where
     makePiecePath :: MonadIO m => Int -> m (Path Rel File)
     makePiecePath piece =
-        liftIO . parseRelFile $ "piece-" ++ show piece ++ ".bin"
-   
+        liftIO . Path.parseRelFile $ "piece-" ++ show piece ++ ".bin"
