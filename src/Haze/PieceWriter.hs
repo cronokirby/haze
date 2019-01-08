@@ -31,7 +31,7 @@ for the piece ending "fileB".
 -}
 writePieces :: MonadIO m => FileInfo -> SHAPieces -> [(Int, ByteString)] -> m ()
 writePieces (SingleFile path fileLength _) (SHAPieces pieceSize _) pieces = do
-    let maxPiece = fromIntegral $ fileLength `div` pieceSize
+    let maxPiece = fromIntegral $ (fileLength - 1) `div` pieceSize
     -- this shouldn't ever throw
     paths <- forM [0..maxPiece] makePiecePath
     let piecePaths = listArray (0, maxPiece) paths
