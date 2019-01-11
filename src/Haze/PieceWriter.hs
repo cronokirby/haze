@@ -41,24 +41,18 @@ import           System.IO                      ( Handle
 import           Haze.Tracker                   ( FileInfo(..)
                                                 , FileItem(..)
                                                 , SHAPieces(..)
+                                                , totalFileLength
                                                 )
 
 
 type AbsFile = Path Abs File
 
-{- | Represents information about the pieces we'll be writing.
+{- | Represents information about the structure of pieces we have.
 
 This should ideally be generated statically before running the piece writer,
-as the information never changes.
+as this information never changes.
 -}
-data PieceInfo = PieceInfo
-    { pieceInfoRoot :: !(Path Abs Dir) -- ^ The root directory to work in
-    -- | The structure of the pieces we're working with
-    , pieceInfoStructure :: !PieceStructure
-    }
-
--- | Represents information about the structure of pieces we have.
-data PieceStructure
+data PieceInfo
     -- | We have a single file, and an array of pieces to save
     = SimplePieces !AbsFile !(Array Int AbsFile)
     {- | We have multiple files to deal with
@@ -89,21 +83,31 @@ into which the files should be unpacked.
 -}
 makePieceInfo :: FileInfo -> SHAPieces -> Path Abs Dir -> PieceInfo
 makePieceInfo fileInfo pieces root = case fileInfo of
-    SingleFile (FileItem path fileLength _) ->
-        let pieceSize  = shaPieceSize pieces
-            maxPiece   = fromIntegral $ (fileLength - 1) `div` pieceSize
-            paths      = makePiecePath root <$> [0 .. maxPiece]
+    SingleFile (FileItem path _ _) ->
+        let paths      = makePiecePath root <$> [0 .. maxPiece]
             piecePaths = listArray (0, maxPiece) paths
-        in  PieceInfo root (SimplePieces (root </> path) piecePaths)
+        in  SimplePieces (root </> path) piecePaths
     -- TODO: define this
-    MultiFile _ _ -> undefined
+    MultiFile relRoot items ->
+        let absRoot = root </> relRoot
+            go (i, splits, files) (FileItem path size _) =
+                let d = fromIntegral $ size `div` pieceSize
+                    lastFit = d + i - 1
+                    fitPaths = makePiecePath absRoot <$> [i..lastFit]
+                    splits' = splits ++ fmap NormalPiece fitPaths
+                    files' = (absRoot </> path, fitPaths) : files
+                in (lastFit + 1, splits', files')
+            (_, theSplits, theFiles) = foldl' go (0, [], []) items
+        in  MultiPieces (listArray (0, maxPiece) theSplits) theFiles
   where
+    pieceSize :: Int64
+    pieceSize = let (SHAPieces size _) = pieces in size
+    maxPiece :: Int
+    maxPiece = fromIntegral $ (totalFileLength fileInfo - 1) `div` pieceSize
     makePiecePath :: Path Abs Dir -> Int -> AbsFile
     makePiecePath theRoot piece =
         let pieceName = "piece-" ++ show piece ++ ".bin"
         in  theRoot </> fromJust (Path.parseRelFile pieceName)
-    shaPieceSize :: SHAPieces -> Int64
-    shaPieceSize (SHAPieces pieceSize _) = pieceSize
 
 
 {- | Write a list of complete indices and pieces to a file.
@@ -113,7 +117,7 @@ it how they're arranged into files, as well as the size of each normal piece.
 The function takes an absolute directory to serve as the root for all files.
 -}
 writePieces :: MonadIO m => PieceInfo -> [(Int, ByteString)] -> m ()
-writePieces PieceInfo {..} pieces = case pieceInfoStructure of
+writePieces pieceInfo pieces = case pieceInfo of
     SimplePieces filePath piecePaths -> do
         forM_ pieces
             $ \(piece, bytes) -> writeAbsFile (piecePaths ! piece) bytes
