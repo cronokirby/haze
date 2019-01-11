@@ -21,7 +21,10 @@ import           Data.Array                     ( Array
                                                 , elems
                                                 , listArray
                                                 )
+import qualified Data.ByteString               as BS
+-- We import lazy bytestring for implementing efficient file ops
 import qualified Data.ByteString.Lazy          as LBS
+import qualified Data.IntMap                   as IntMap
 import           Data.Maybe                     ( fromJust )
 import           Path                           ( Path
                                                 , Abs
@@ -41,6 +44,8 @@ import           Haze.Tracker                   ( FileInfo(..)
                                                 )
 
 
+type AbsFile = Path Abs File
+
 {- | Represents information about the pieces we'll be writing.
 
 This should ideally be generated statically before running the piece writer,
@@ -55,7 +60,24 @@ data PieceInfo = PieceInfo
 -- | Represents information about the structure of pieces we have.
 data PieceStructure
     -- | We have a single file, and an array of pieces to save
-    = SimplePieces !(Path Abs File) !(Array Int (Path Abs File))
+    = SimplePieces !AbsFile !(Array Int AbsFile)
+    {- | We have multiple files to deal with
+
+    The first argument is an array mapping each piece index to how
+    we the piece should be split across multiple files. The
+    second argument is a list of files and the corresponding
+    files they depend on. Whenever all of the corresponding files
+    exist, that file is complete.
+    -}
+    | MultiPieces !(Array Int SplitPiece) ![(AbsFile, [AbsFile])]
+
+-- | Represents a piece we have to save potentially over 2 files.
+data SplitPiece
+    -- | A piece we can save to a piece file
+    = NormalPiece !AbsFile
+    -- | A piece that needs to save N bytes in one file, and the rest in the other
+    | LeftOverPiece !Int !AbsFile !AbsFile
+
 
 
 {- | Construct a 'PieceInfo' given information about the pieces.
@@ -76,7 +98,7 @@ makePieceInfo fileInfo pieces root = case fileInfo of
     -- TODO: define this
     MultiFile _ _ -> undefined
   where
-    makePiecePath :: Path Abs Dir -> Int -> Path Abs File
+    makePiecePath :: Path Abs Dir -> Int -> AbsFile
     makePiecePath theRoot piece =
         let pieceName = "piece-" ++ show piece ++ ".bin"
         in  theRoot </> fromJust (Path.parseRelFile pieceName)
@@ -93,20 +115,36 @@ The function takes an absolute directory to serve as the root for all files.
 writePieces :: MonadIO m => PieceInfo -> [(Int, ByteString)] -> m ()
 writePieces PieceInfo {..} pieces = case pieceInfoStructure of
     SimplePieces filePath piecePaths -> do
-        forM_ pieces $ \(piece, bytes) ->
-            writeFileBS (Path.fromAbsFile (piecePaths ! piece)) bytes
-        let paths = elems piecePaths
+        forM_ pieces
+            $ \(piece, bytes) -> writeAbsFile (piecePaths ! piece) bytes
+        appendWhenAllExist filePath (elems piecePaths)
+    MultiPieces splitPieces fileDependencies -> do
+        forM_ pieces $ \(piece, bytes) -> case splitPieces ! piece of
+            NormalPiece filePath ->
+                writeFileBS (Path.fromAbsFile filePath) bytes
+            LeftOverPiece startSize startPath endPath ->
+                let (start, end) = BS.splitAt startSize bytes
+                in  writeAbsFile startPath start *> writeAbsFile endPath end
+        forM_ fileDependencies (uncurry appendWhenAllExist)
+  where
+    -- We use this, but never check to not append twice...
+    appendWhenAllExist :: MonadIO m => AbsFile -> [AbsFile] -> m ()
+    appendWhenAllExist filePath paths = do
         allPieces <- allM Path.doesFileExist paths
         when allPieces $ withAbsFile filePath AppendMode (appendAll paths)
 
 
+-- | Write bytes to an absolute path
+writeAbsFile :: MonadIO m => AbsFile -> ByteString -> m ()
+writeAbsFile path = writeFileBS (Path.fromAbsFile path)
+
 -- | Utility function for `withFile` but with an absolute path
-withAbsFile :: MonadIO m => Path Abs File -> IOMode -> (Handle -> IO ()) -> m ()
+withAbsFile :: MonadIO m => AbsFile -> IOMode -> (Handle -> IO ()) -> m ()
 withAbsFile path mode action =
     liftIO $ withFile (Path.fromAbsFile path) mode action
 
 -- | Append all paths in a file to a handle
-appendAll :: [Path Abs File] -> Handle -> IO ()
+appendAll :: [AbsFile] -> Handle -> IO ()
 appendAll paths = forM_ paths . appendH
   where
     moveBytes h = LBS.hGetContents >=> LBS.hPut h
