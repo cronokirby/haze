@@ -31,6 +31,7 @@ import           Path                           ( Path
                                                 , File
                                                 , Dir
                                                 , (</>)
+                                                , (<.>)
                                                 )
 import qualified Path
 import qualified Path.IO                       as Path
@@ -73,7 +74,6 @@ data SplitPiece
     | LeftOverPiece !Int !AbsFile !AbsFile
 
 
-
 {- | Construct a 'PieceInfo' given information about the pieces.
 
 The 'FileInfo' provides information about how the pieces are organised
@@ -87,18 +87,33 @@ makePieceInfo fileInfo pieces root = case fileInfo of
         let paths      = makePiecePath root <$> [0 .. maxPiece]
             piecePaths = listArray (0, maxPiece) paths
         in  SimplePieces (root </> path) piecePaths
-    -- TODO: define this
     MultiFile relRoot items ->
-        let absRoot = root </> relRoot
-            go (i, splits, files) (FileItem path size _) =
-                let d = fromIntegral $ size `div` pieceSize
-                    lastFit = d + i - 1
-                    fitPaths = makePiecePath absRoot <$> [i..lastFit]
-                    splits' = splits ++ fmap NormalPiece fitPaths
-                    files' = (absRoot </> path, fitPaths) : files
-                in (lastFit + 1, splits', files')
-            (_, theSplits, theFiles) = foldl' go (0, [], []) items
-        in  MultiPieces (listArray (0, maxPiece) theSplits) theFiles
+        let
+            absRoot = root </> relRoot
+            go (i, makeLO, splits, files) (FileItem path size _) =
+                let
+                    absPath               = absRoot </> path
+                    (startPiece, midSize) = case makeLO of
+                        Just (_, startSize) ->
+                            (Just (makeStartPiece absPath), size - startSize)
+                        Nothing -> (Nothing, size)
+                    d        = fromIntegral $ midSize `div` pieceSize
+                    lastFit  = d + i - 1
+                    leftOver = liftA2 (\(f, _) p -> f p) makeLO startPiece
+                    m        = midSize `mod` pieceSize
+                    endPiece = if m == 0
+                        then Nothing
+                        else Just (makeEndPiece absPath)
+                    makeLO'    = (\x -> (LeftOverPiece (fromIntegral m) x, pieceSize - m)) <$> endPiece
+                    midPieces  = makePiecePath absRoot <$> [i .. lastFit]
+                    nextSplits = leftOver `tryCons` fmap NormalPiece midPieces
+                    deps = startPiece `tryCons` (endPiece `tryCons` midPieces)
+                    files'     = (absRoot </> path, deps) : files
+                in
+                    (lastFit + 1, makeLO', splits ++ nextSplits, files')
+            (_, _, theSplits, theFiles) = foldl' go (0, Nothing, [], []) items
+        in
+            MultiPieces (listArray (0, maxPiece) theSplits) theFiles
   where
     pieceSize :: Int64
     pieceSize = let (SHAPieces size _) = pieces in size
@@ -108,6 +123,12 @@ makePieceInfo fileInfo pieces root = case fileInfo of
     makePiecePath theRoot piece =
         let pieceName = "piece-" ++ show piece ++ ".bin"
         in  theRoot </> fromJust (Path.parseRelFile pieceName)
+    makeStartPiece :: Path Abs File -> Path Abs File
+    makeStartPiece file = fromJust (file <.> "start")
+    makeEndPiece :: Path Abs File -> Path Abs File
+    makeEndPiece file = fromJust (file <.> "end")
+    tryCons :: Maybe a -> [a] -> [a]
+    tryCons = maybe id (:)
 
 
 {- | Write a list of complete indices and pieces to a file.
