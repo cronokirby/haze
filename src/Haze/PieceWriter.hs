@@ -147,11 +147,13 @@ writePieces pieceInfo pieces = case pieceInfo of
                 in  writeAbsFile startPath start *> writeAbsFile endPath end
         forM_ fileDependencies (uncurry appendWhenAllExist)
   where
-    -- We use this, but never check to not append twice...
+    -- This will also remove the appended files
     appendWhenAllExist :: MonadIO m => AbsFile -> [AbsFile] -> m ()
     appendWhenAllExist filePath paths = do
         allPieces <- allM Path.doesFileExist paths
-        when allPieces $ withAbsFile filePath AppendMode (appendAll paths)
+        when allPieces $ do
+            withAbsFile filePath AppendMode (appendAll paths)
+            removeAll paths
 
 
 -- | Write bytes to an absolute path
@@ -169,3 +171,7 @@ appendAll paths = forM_ paths . appendH
   where
     moveBytes h = LBS.hGetContents >=> LBS.hPut h
     appendH h path = withAbsFile path ReadMode (moveBytes h)
+
+-- | Remove all files in a list
+removeAll :: MonadIO m => [AbsFile] -> m ()
+removeAll paths = forM_ paths Path.removeFile
