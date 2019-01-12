@@ -8,7 +8,9 @@ the writing, as well as starting up the process are provided.
 -}
 module Haze.PieceWriter
     ( -- Mainly exported for testing
-      makePieceInfo
+      PieceInfo(..)
+    , SplitPiece(..)
+    , makePieceInfo
     , writePieces
     )
 where
@@ -63,6 +65,7 @@ data PieceInfo
     exist, that file is complete.
     -}
     | MultiPieces !(Array Int SplitPiece) ![(AbsFile, [AbsFile])]
+    deriving (Eq, Show)
 
 -- | Represents a piece we have to save potentially over 2 files.
 data SplitPiece
@@ -70,6 +73,7 @@ data SplitPiece
     = NormalPiece !AbsFile
     -- | A piece that needs to save N bytes in one file, and the rest in the other
     | LeftOverPiece !Int !AbsFile !AbsFile
+    deriving (Eq, Show)
 
 
 {- | Construct a 'PieceInfo' given information about the pieces.

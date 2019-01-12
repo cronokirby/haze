@@ -1,11 +1,14 @@
 import           Relude
 
+import           Data.Array                     ( listArray )
 import           Data.Attoparsec.ByteString     ( parseOnly )
 import qualified Data.ByteString               as BS
 import qualified Data.HashMap.Strict           as HM
+import           Data.Maybe                     ( fromJust )
 import           Hedgehog
 import qualified Hedgehog.Gen                  as Gen
 import qualified Hedgehog.Range                as Range
+import qualified Path
 import           Test.Hspec
 
 import           Haze.Bencoding
@@ -23,7 +26,14 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , saveCompletePieces
                                                 , bufferBytes
                                                 )
-import           Haze.Tracker                   ( SHAPieces(..) )
+import           Haze.PieceWriter               ( PieceInfo(..)
+                                                , SplitPiece(..)
+                                                , makePieceInfo
+                                                )
+import           Haze.Tracker                   ( SHAPieces(..)
+                                                , FileInfo(..)
+                                                , FileItem(..)
+                                                )
 
 
 main :: IO ()
@@ -31,6 +41,7 @@ main = do
     hspec bencodingSpec
     hspec messageSpec
     hspec pieceBufferSpec
+    hspec pieceWriterSpec
     propertyTests
 
 
@@ -162,6 +173,30 @@ pieceBufferSpec = do
     bigBuffer     = sizedPieceBuffer 4 (SHAPieces 2 "") 1
     bigBuffer1    = writeBlock (BlockIndex 0 0) "1" bigBuffer
     bigBuffer2    = writeBlock (BlockIndex 0 1) "2" bigBuffer1
+
+
+pieceWriterSpec :: SpecWith ()
+pieceWriterSpec = describe "PieceWriter.makePieceInfo" $ do
+    let makeFile files = SimplePieces
+            (makeAbsFile "foo.txt")
+            (listArray (0, length files - 1) . map makeAbsFile $ files)
+    it "works for single files with even division" $ do
+        makeSingleFile "foo.txt" 2 `pieceInfoShouldBe` makeFile ["piece-0.bin"]
+        makeSingleFile "foo.txt" 4
+            `pieceInfoShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
+    it "works for single files with uneven division" $ do
+        makeSingleFile "foo.txt" 1 `pieceInfoShouldBe` makeFile ["piece-0.bin"]
+        makeSingleFile "foo.txt" 3
+            `pieceInfoShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
+  where
+    makeFileItem stringPath size =
+        FileItem (fromJust (Path.parseRelFile stringPath)) size Nothing
+    makeSingleFile stringPath size = SingleFile (makeFileItem stringPath size)
+    root        = fromJust (Path.parseAbsDir "/")
+    makeAbsFile = fromJust . Path.parseAbsFile . ("/" ++)
+    smallPieces = SHAPieces 2 ""
+    pieceInfoShouldBe info res =
+        makePieceInfo info smallPieces root `shouldBe` res
 
 
 propertyTests :: IO ()
