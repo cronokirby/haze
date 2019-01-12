@@ -88,32 +88,26 @@ makePieceInfo fileInfo pieces root = case fileInfo of
             piecePaths = listArray (0, maxPiece) paths
         in  SimplePieces (root </> path) piecePaths
     MultiFile relRoot items ->
-        let
-            absRoot = root </> relRoot
+        let absRoot = root </> relRoot
             go (i, makeLO, splits, files) (FileItem path size _) =
                 let
-                    absPath               = absRoot </> path
-                    (startPiece, midSize) = case makeLO of
-                        Just (_, startSize) ->
-                            (Just (makeStartPiece absPath), size - startSize)
-                        Nothing -> (Nothing, size)
-                    d        = fromIntegral $ midSize `div` pieceSize
-                    lastFit  = d + i - 1
-                    leftOver = liftA2 (\(f, _) p -> f p) makeLO startPiece
-                    m        = midSize `mod` pieceSize
-                    endPiece = if m == 0
-                        then Nothing
-                        else Just (makeEndPiece absPath)
-                    makeLO'    = (\x -> (LeftOverPiece (fromIntegral m) x, pieceSize - m)) <$> endPiece
+                    absPath    = absRoot </> path
+                    startPiece = makeLO $> makeStartPiece absPath
+                    midSize    = maybe size ((size -) . snd) makeLO
+                    leftOver   = liftA2 (\(f, _) p -> f p) makeLO startPiece
+                    (d, m)     = midSize `divMod` pieceSize
+                    lastFit    = fromIntegral d + i - 1
+                    endPiece   = guard (m /= 0) $> makeEndPiece absPath
+                    nextIndex  = lastFit + if m == 0 then 1 else 2
+                    makeLO'    = makeLeftOverFunc m <$> endPiece
                     midPieces  = makePiecePath absRoot <$> [i .. lastFit]
                     nextSplits = leftOver `tryCons` fmap NormalPiece midPieces
                     deps = startPiece `tryCons` (endPiece `tryCons` midPieces)
                     files'     = (absRoot </> path, deps) : files
                 in
-                    (lastFit + 1, makeLO', splits ++ nextSplits, files')
+                    (nextIndex, makeLO', splits ++ nextSplits, files')
             (_, _, theSplits, theFiles) = foldl' go (0, Nothing, [], []) items
-        in
-            MultiPieces (listArray (0, maxPiece) theSplits) theFiles
+        in  MultiPieces (listArray (0, maxPiece) theSplits) theFiles
   where
     pieceSize :: Int64
     pieceSize = let (SHAPieces size _) = pieces in size
@@ -123,12 +117,15 @@ makePieceInfo fileInfo pieces root = case fileInfo of
     makePiecePath theRoot piece =
         let pieceName = "piece-" ++ show piece ++ ".bin"
         in  theRoot </> fromJust (Path.parseRelFile pieceName)
-    makeStartPiece :: Path Abs File -> Path Abs File
+    makeStartPiece :: AbsFile -> AbsFile
     makeStartPiece file = fromJust (file <.> "start")
-    makeEndPiece :: Path Abs File -> Path Abs File
+    makeEndPiece :: AbsFile -> AbsFile
     makeEndPiece file = fromJust (file <.> "end")
     tryCons :: Maybe a -> [a] -> [a]
     tryCons = maybe id (:)
+    makeLeftOverFunc :: Int64 -> AbsFile -> (AbsFile -> SplitPiece, Int64)
+    makeLeftOverFunc m path =
+        (LeftOverPiece (fromIntegral m) path, pieceSize - m)
 
 
 {- | Write a list of complete indices and pieces to a file.
