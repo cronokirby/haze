@@ -1,4 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
 {- |
 Description: Contains functions centered around writing pieces to disk
 
@@ -24,7 +23,6 @@ import           Data.Array                     ( Array
 import qualified Data.ByteString               as BS
 -- We import lazy bytestring for implementing efficient file ops
 import qualified Data.ByteString.Lazy          as LBS
-import qualified Data.IntMap                   as IntMap
 import           Data.Maybe                     ( fromJust )
 import           Path                           ( Path
                                                 , Abs
