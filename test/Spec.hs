@@ -177,9 +177,8 @@ pieceBufferSpec = do
 
 pieceWriterSpec :: SpecWith ()
 pieceWriterSpec = describe "PieceWriter.makePieceInfo" $ do
-    let makeFile files = SimplePieces
-            (makeAbsFile "foo.txt")
-            (listArray (0, length files - 1) . map makeAbsFile $ files)
+    let makeFile files = SimplePieces (makeAbsFile "foo.txt")
+                                      (makeArr . map makeAbsFile $ files)
     it "works for single files with even division" $ do
         makeSingleFile "foo.txt" 2 `pieceInfoShouldBe` makeFile ["piece-0.bin"]
         makeSingleFile "foo.txt" 4
@@ -188,11 +187,24 @@ pieceWriterSpec = describe "PieceWriter.makePieceInfo" $ do
         makeSingleFile "foo.txt" 1 `pieceInfoShouldBe` makeFile ["piece-0.bin"]
         makeSingleFile "foo.txt" 3
             `pieceInfoShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
+    let makeDeps = map (\(f, fs) -> (makeAbsFile f, map makeAbsFile fs))
+    it "works for multiple files with even division" $ do
+        let file1 = MultiFile
+                relRoot
+                [makeFileItem "foo.txt" 2, makeFileItem "bar.txt" 2]
+            splits1 = makeArr $ map (NormalPiece . makeAbsFile)
+                                    ["piece-0.bin", "piece-1.bin"]
+            deps1 =
+                makeDeps
+                    [("bar.txt", ["piece-1.bin"]), ("foo.txt", ["piece-0.bin"])]
+        file1 `pieceInfoShouldBe` MultiPieces splits1 deps1
   where
     makeFileItem stringPath size =
         FileItem (fromJust (Path.parseRelFile stringPath)) size Nothing
+    makeArr xs = listArray (0, length xs - 1) xs
     makeSingleFile stringPath size = SingleFile (makeFileItem stringPath size)
     root        = fromJust (Path.parseAbsDir "/")
+    relRoot     = fromJust (Path.parseRelDir "./")
     makeAbsFile = fromJust . Path.parseAbsFile . ("/" ++)
     smallPieces = SHAPieces 2 ""
     pieceInfoShouldBe info res =
