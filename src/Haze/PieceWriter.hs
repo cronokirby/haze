@@ -90,7 +90,8 @@ makePieceInfo fileInfo pieces root = case fileInfo of
             piecePaths = listArray (0, maxPiece) paths
         in  SimplePieces (root </> path) piecePaths
     MultiFile relRoot items ->
-        let absRoot = root </> relRoot
+        let
+            absRoot = root </> relRoot
             go (i, makeLO, splits, files) (FileItem path size _) =
                 let
                     absPath    = absRoot </> path
@@ -99,17 +100,24 @@ makePieceInfo fileInfo pieces root = case fileInfo of
                     leftOver   = liftA2 (\(f, _) p -> f p) makeLO startPiece
                     (d, m)     = midSize `divMod` pieceSize
                     lastFit    = fromIntegral d + i - 1
-                    endPiece   = guard (m /= 0) $> makeEndPiece absPath
                     nextIndex  = lastFit + if m == 0 then 1 else 2
-                    makeLO'    = makeLeftOverFunc m <$> endPiece
-                    midPieces  = makePiecePath absRoot <$> [i .. lastFit]
-                    nextSplits = leftOver `tryCons` fmap NormalPiece midPieces
-                    deps = startPiece `tryCons` (endPiece `tryCons` midPieces)
-                    files'     = (absRoot </> path, deps) : files
+                    finalEnd =
+                        guard (m /= 0 && nextIndex > maxPiece)
+                            $> makePiecePath absRoot maxPiece
+                    bookEndPiece = guard (m /= 0) $> makeEndPiece absPath
+                    endPiece     = finalEnd <|> bookEndPiece
+                    makeLO'      = makeLeftOverFunc m <$> endPiece
+                    midPieces    = makePiecePath absRoot <$> [i .. lastFit]
+                    midSplits    = leftOver `tryCons` fmap NormalPiece midPieces
+                    nextSplits =
+                        midSplits ++ maybeToList (fmap NormalPiece finalEnd)
+                    deps   = startPiece `tryCons` (endPiece `tryCons` midPieces)
+                    files' = (absRoot </> path, deps) : files
                 in
                     (nextIndex, makeLO', splits ++ nextSplits, files')
             (_, _, theSplits, theFiles) = foldl' go (0, Nothing, [], []) items
-        in  MultiPieces (listArray (0, maxPiece) theSplits) theFiles
+        in
+            MultiPieces (listArray (0, maxPiece) theSplits) theFiles
   where
     pieceSize :: Int64
     pieceSize = let (SHAPieces size _) = pieces in size

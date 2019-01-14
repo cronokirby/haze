@@ -189,15 +189,30 @@ pieceWriterSpec = describe "PieceWriter.makePieceInfo" $ do
             `pieceInfoShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
     let makeDeps = map (\(f, fs) -> (makeAbsFile f, map makeAbsFile fs))
     it "works for multiple files with even division" $ do
-        let file1 = MultiFile
-                relRoot
-                [makeFileItem "foo.txt" 2, makeFileItem "bar.txt" 2]
-            splits1 = makeArr $ map (NormalPiece . makeAbsFile)
-                                    ["piece-0.bin", "piece-1.bin"]
-            deps1 =
-                makeDeps
-                    [("bar.txt", ["piece-1.bin"]), ("foo.txt", ["piece-0.bin"])]
-        file1 `pieceInfoShouldBe` MultiPieces splits1 deps1
+        let items = uncurry makeFileItem <$> [("foo.txt", 2), ("bar.txt", 2)]
+            file       = MultiFile relRoot items
+            makePieces = map (NormalPiece . makeAbsFile)
+            splits     = makeArr $ makePieces ["piece-0.bin", "piece-1.bin"]
+            deps       = makeDeps
+                [("bar.txt", ["piece-1.bin"]), ("foo.txt", ["piece-0.bin"])]
+        file `pieceInfoShouldBe` MultiPieces splits deps
+    it "works for multiple files with uneven division" $ do
+        let items = uncurry makeFileItem <$> [("foo.txt", 3), ("bar.txt", 4)]
+            file = MultiFile relRoot items
+            makeNormal = NormalPiece . makeAbsFile
+            makeLeftOver a b c =
+                LeftOverPiece a (makeAbsFile b) (makeAbsFile c)
+            splits = makeArr
+                [ makeNormal "piece-0.bin"
+                , makeLeftOver 1 "foo.txt.end" "bar.txt.start"
+                , makeNormal "piece-2.bin"
+                , makeNormal "piece-3.bin"
+                ]
+            deps = makeDeps
+                [ ("bar.txt", ["bar.txt.start", "piece-3.bin", "piece-2.bin"])
+                , ("foo.txt", ["foo.txt.end", "piece-0.bin"])
+                ]
+        file `pieceInfoShouldBe` MultiPieces splits deps
   where
     makeFileItem stringPath size =
         FileItem (fromJust (Path.parseRelFile stringPath)) size Nothing
