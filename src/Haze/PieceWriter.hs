@@ -109,8 +109,9 @@ makePieceInfo fileInfo pieces root = case fileInfo of
                     makeLO'      = makeLeftOverFunc m <$> endPiece
                     midPieces    = makePiecePath absRoot <$> [i .. lastFit]
                     midSplits    = leftOver `tryCons` fmap NormalPiece midPieces
-                    nextSplits =
-                        midSplits ++ maybeToList (fmap NormalPiece finalEnd)
+                    nextSplits   = case finalEnd of
+                        Just end -> midSplits ++ [NormalPiece end]
+                        Nothing  -> midSplits
                     deps   = startPiece `tryCons` (endPiece `tryCons` midPieces)
                     files' = (absRoot </> path, deps) : files
                 in
