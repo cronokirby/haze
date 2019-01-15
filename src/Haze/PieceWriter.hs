@@ -104,12 +104,12 @@ makePieceInfo fileInfo pieces root = case fileInfo of
                     finalEnd =
                         guard (m /= 0 && nextIndex > maxPiece)
                             $> makePiecePath absRoot maxPiece
-                    bookEndPiece = guard (m /= 0) $> makeEndPiece absPath
-                    endPiece     = finalEnd <|> bookEndPiece
-                    makeLO'      = makeLeftOverFunc m <$> endPiece
-                    midPieces    = makePiecePath absRoot <$> [i .. lastFit]
-                    midSplits    = leftOver `tryCons` fmap NormalPiece midPieces
-                    nextSplits   = case finalEnd of
+                    bookEnd    = guard (m /= 0) $> makeEndPiece absPath
+                    endPiece   = finalEnd <|> bookEnd
+                    makeLO'    = makeLeftOverFunc m <$> endPiece
+                    midPieces  = makePiecePath absRoot <$> [i .. lastFit]
+                    midSplits  = leftOver `tryCons` map NormalPiece midPieces
+                    nextSplits = case finalEnd of
                         Just end -> midSplits ++ [NormalPiece end]
                         Nothing  -> midSplits
                     deps   = startPiece `tryCons` (endPiece `tryCons` midPieces)
