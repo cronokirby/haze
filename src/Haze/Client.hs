@@ -208,12 +208,12 @@ launchTorrent = do
         putTextLn ("Trying: " <> show tracker)
         case tracker of
             HTTPTracker url ->
-                launchConn . runConnWith connInfo $ connectHTTP url
+                connectHTTP url & runConnWith connInfo & launchConn
             UDPTracker url prt ->
-                launchConn
-                    . Sock.withSocketsDo
-                    . runConnWith connInfo
-                    $ connectUDP url prt
+                connectUDP url prt
+                    & runConnWith connInfo
+                    & Sock.withSocketsDo
+                    & launchConn
             UnknownTracker t -> return (ScoutUnkownTracker t)
     noTrackers :: MonadIO m => m ()
     noTrackers = putTextLn "No more trackers left to try :("
