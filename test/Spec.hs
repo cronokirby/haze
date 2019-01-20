@@ -15,6 +15,8 @@ import           Haze.Bencoding
 import           Haze.Peer                      ( Message(..)
                                                 , encodeMessage
                                                 , parseMessage
+                                                , parseMessages
+                                                , firstParseCallBack
                                                 )
 import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , BlockInfo
@@ -229,7 +231,10 @@ pieceWriterSpec = describe "PieceWriter.makePieceInfo" $ do
 propertyTests :: IO ()
 propertyTests = void $ checkParallel $ Group
     "Bencoding Properties"
-    [("prop_bencoding", propBencoding), ("prop_message", propMessage)]
+    [ ("prop_bencoding", propBencoding)
+    , ("prop_message", propMessage)
+    , ("prop_multi_message", propMultiMessage)
+    ]
 
 propBencoding :: Property
 propBencoding = property $ do
@@ -254,25 +259,37 @@ propMessage :: Property
 propMessage = property $ do
     msg <- forAll genMessage
     parseOnly parseMessage (encodeMessage msg) === Right msg
+
+propMultiMessage :: Property
+propMultiMessage = property $ do
+    msgs <- forAll genMessages
+    doParse (encodeMessages msgs) === Just msgs
   where
-    genMessage :: MonadGen m => m Message
-    genMessage = Gen.choice
-        [ return KeepAlive
-        , return Choke
-        , return UnChoke
-        , return Interested
-        , return UnInterested
-        , Have <$> genInt
-        , Port <$> Gen.integral_ (Range.linear 0 100)
-        , Request <$> genBlockInfo
-        , Cancel <$> genBlockInfo
-        , liftA2 RecvBlock genBlockIndex genBS
-        ]
-    genInt :: MonadGen m => m Int
-    genInt = Gen.int (Range.linear 0 100)
-    genBS :: MonadGen m => m ByteString
-    genBS = Gen.bytes (Range.linear 0 32)
-    genBlockIndex :: MonadGen m => m BlockIndex
-    genBlockIndex = liftA2 BlockIndex genInt genInt
-    genBlockInfo :: MonadGen m => m BlockInfo
-    genBlockInfo = liftA3 makeBlockInfo genInt genInt genInt
+    encodeMessages :: [Message] -> ByteString
+    encodeMessages = foldMap encodeMessage
+    doParse :: ByteString -> Maybe [Message]
+    doParse = fmap fst . parseMessages firstParseCallBack
+    genMessages :: MonadGen m => m [Message]
+    genMessages = Gen.list (Range.linear 0 20) genMessage
+
+genMessage :: MonadGen m => m Message
+genMessage = Gen.choice
+    [ return KeepAlive
+    , return Choke
+    , return UnChoke
+    , return Interested
+    , return UnInterested
+    , Have <$> genInt
+    , Port <$> Gen.integral_ (Range.linear 0 100)
+    , Request <$> genBlockInfo
+    , Cancel <$> genBlockInfo
+    , liftA2 RecvBlock genBlockIndex genBS
+    ]
+genInt :: MonadGen m => m Int
+genInt = Gen.int (Range.linear 0 100)
+genBS :: MonadGen m => m ByteString
+genBS = Gen.bytes (Range.linear 0 32)
+genBlockIndex :: MonadGen m => m BlockIndex
+genBlockIndex = liftA2 BlockIndex genInt genInt
+genBlockInfo :: MonadGen m => m BlockInfo
+genBlockInfo = liftA3 makeBlockInfo genInt genInt genInt

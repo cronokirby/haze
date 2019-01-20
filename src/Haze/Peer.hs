@@ -6,6 +6,9 @@ module Haze.Peer
     , Message(..)
     , encodeMessage
     , parseMessage
+    , ParseCallBack
+    , firstParseCallBack
+    , parseMessages
     )
 where
 
@@ -106,3 +109,26 @@ parseMessage = do
         let blockLen = ln - 9
         RecvBlock (BlockIndex index begin) <$> AP.take blockLen
     parseID _ _ = fail "Unrecognised ID, or bad length"
+
+
+newtype ParseCallBack = ParseCallBack (ByteString -> AP.Result Message)
+
+-- | The callback that should be used at the beginning of parsing
+firstParseCallBack :: ParseCallBack
+firstParseCallBack = ParseCallBack (AP.parse parseMessage)
+
+{- | Attempt to parse all available messages from a bytestring
+
+Returns Nothing if parsing failed at some point.
+-}
+parseMessages :: ParseCallBack -> ByteString -> Maybe ([Message], ParseCallBack)
+parseMessages callback bytes = do
+    (messages, cb) <- gotoPartial callback bytes []
+    -- We want to make sure and output messages in the order we received them
+    return (reverse messages, cb)
+  where
+    gotoPartial (ParseCallBack cb) bs acc = case cb bs of
+        AP.Fail{}   -> Nothing
+        Partial f   -> Just (acc, ParseCallBack f)
+        Done next m -> gotoPartial firstParseCallBack next (m : acc)
+    
