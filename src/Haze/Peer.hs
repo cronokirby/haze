@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {- |
 Description: Contains types and functions related to peer communication.
 -}
@@ -131,4 +132,29 @@ parseMessages callback bytes = do
         AP.Fail{}   -> Nothing
         Partial f   -> Just (acc, ParseCallBack f)
         Done next m -> gotoPartial firstParseCallBack next (m : acc)
-    
+
+
+-- | Represents the state of p2p communication
+data PeerState = PeerState
+    { peerIsChoking :: Bool -- ^ We're being choked by the peer
+    -- | The peer is interested in us
+    , peerIsInterested :: Bool
+    -- | We are choking the peer
+    , peerAmChoking :: Bool
+    -- | We're interested in the peer 
+    , peerAmInterested :: Bool
+    }
+
+-- | The peer state at the start of communication
+initialPeerState :: PeerState
+initialPeerState = PeerState True False True False
+
+
+-- | Modify our state based on a message, and send back a reply
+reactToMessage :: MonadState PeerState m => Message -> m (Maybe Message)
+reactToMessage msg = case msg of
+    Choke        -> modify (\ps -> ps { peerIsChoking = True }) $> Nothing
+    UnChoke      -> modify (\ps -> ps { peerIsChoking = False }) $> Nothing
+    Interested   -> modify (\ps -> ps { peerIsInterested = True }) $> Nothing
+    UnInterested -> modify (\ps -> ps { peerIsInterested = False }) $> Nothing
+    _            -> undefined
