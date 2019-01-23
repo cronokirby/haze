@@ -1,4 +1,6 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {- |
 Description: Contains types and functions related to peer communication.
 -}
@@ -151,6 +153,25 @@ data PeerState = PeerState
 -- | The peer state at the start of communication
 initialPeerState :: PeerState
 initialPeerState = PeerState True False True False Set.empty
+
+
+-- | The information needed in a peer computation
+newtype PeerMInfo = PeerMInfo
+    { peerMState :: IORef PeerState -- ^ The local state
+    }
+
+-- | Represents computations for a peer
+newtype PeerM a = PeerM (ReaderT PeerMInfo IO a)
+        deriving (Functor, Applicative, Monad,
+                  MonadReader PeerMInfo, MonadIO)
+
+instance MonadState PeerState PeerM where
+    state f = do
+        stRef <- asks peerMState
+        st <- readIORef stRef
+        let (a, st') = f st
+        writeIORef stRef st'
+        return a
 
 
 -- | Modify our state based on a message, and send back a reply
