@@ -18,6 +18,7 @@ import           Relude
 import           Data.Attoparsec.ByteString    as AP
 import qualified Data.ByteString               as BS
 import           Network.Socket                 ( PortNumber )
+import qualified Data.Set                      as Set
 
 import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
@@ -143,18 +144,23 @@ data PeerState = PeerState
     , peerAmChoking :: Bool
     -- | We're interested in the peer 
     , peerAmInterested :: Bool
+    -- | The set of pieces this peer has
+    , peerPieces :: Set Int
     }
 
 -- | The peer state at the start of communication
 initialPeerState :: PeerState
-initialPeerState = PeerState True False True False
+initialPeerState = PeerState True False True False Set.empty
 
 
 -- | Modify our state based on a message, and send back a reply
-reactToMessage :: MonadState PeerState m => Message -> m (Maybe Message)
+reactToMessage :: MonadState PeerState m => Message -> m ()
 reactToMessage msg = case msg of
-    Choke        -> modify (\ps -> ps { peerIsChoking = True }) $> Nothing
-    UnChoke      -> modify (\ps -> ps { peerIsChoking = False }) $> Nothing
-    Interested   -> modify (\ps -> ps { peerIsInterested = True }) $> Nothing
-    UnInterested -> modify (\ps -> ps { peerIsInterested = False }) $> Nothing
-    _            -> undefined
+    Choke        -> modify (\ps -> ps { peerIsChoking = True })
+    UnChoke      -> modify (\ps -> ps { peerIsChoking = False })
+    Interested   -> modify (\ps -> ps { peerIsInterested = True })
+    UnInterested -> modify (\ps -> ps { peerIsInterested = False })
+    Have piece   -> modify $ \ps ->
+        let pieces = peerPieces ps
+        in  ps { peerPieces = Set.insert piece pieces }
+    _ -> undefined
