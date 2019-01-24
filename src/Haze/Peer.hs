@@ -19,8 +19,10 @@ import           Relude
 
 import           Data.Attoparsec.ByteString    as AP
 import qualified Data.ByteString               as BS
-import           Network.Socket                 ( PortNumber )
+import           Data.IntMap                    ( IntMap )
+import qualified Data.IntMap                   as IntMap
 import qualified Data.Set                      as Set
+import           Network.Socket                 ( PortNumber )
 
 import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
@@ -156,8 +158,10 @@ initialPeerState = PeerState True False True False Set.empty
 
 
 -- | The information needed in a peer computation
-newtype PeerMInfo = PeerMInfo
+data PeerMInfo = PeerMInfo
     { peerMState :: IORef PeerState -- ^ The local state
+    -- | A map from piece index to piece count, used for rarity calcs
+    , peerMPieces :: IntMap (TVar Int)
     }
 
 -- | Represents computations for a peer
@@ -168,20 +172,37 @@ newtype PeerM a = PeerM (ReaderT PeerMInfo IO a)
 instance MonadState PeerState PeerM where
     state f = do
         stRef <- asks peerMState
-        st <- readIORef stRef
+        st    <- readIORef stRef
         let (a, st') = f st
         writeIORef stRef st'
         return a
 
+{- | Add a piece locally, and increment it's global count.
+
+This returns 'False' if the client sent a piece that doesn't exist,
+for some reason or another.
+-}
+addPieceM :: Int -> PeerM Bool
+addPieceM piece = do
+    pieces <- asks peerMPieces
+    case IntMap.lookup piece pieces of
+        Just var -> do
+            atomically $ modifyTVar' var (+1)
+            modify (addLocalPiece piece)
+            return True
+        Nothing  -> return False
+  where
+    addLocalPiece piece ps =
+        let pieces = peerPieces ps
+        in ps { peerPieces = Set.insert piece pieces }
+
 
 -- | Modify our state based on a message, and send back a reply
-reactToMessage :: MonadState PeerState m => Message -> m ()
+reactToMessage :: Message -> PeerM ()
 reactToMessage msg = case msg of
     Choke        -> modify (\ps -> ps { peerIsChoking = True })
     UnChoke      -> modify (\ps -> ps { peerIsChoking = False })
     Interested   -> modify (\ps -> ps { peerIsInterested = True })
     UnInterested -> modify (\ps -> ps { peerIsInterested = False })
-    Have piece   -> modify $ \ps ->
-        let pieces = peerPieces ps
-        in  ps { peerPieces = Set.insert piece pieces }
+    Have piece   -> void $ addPieceM piece -- we should cancel the connection
     _ -> undefined
