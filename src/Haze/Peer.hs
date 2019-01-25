@@ -48,6 +48,7 @@ import           Haze.PieceBuffer               ( PieceBuffer
                                                 , BlockIndex(..)
                                                 , makeBlockInfo
                                                 , HasPieceBuffer(..)
+                                                , nextBlockM
                                                 , writeBlockM
                                                 )
 
@@ -168,11 +169,17 @@ data PeerState = PeerState
     , peerAmInterested :: !Bool
     -- | The set of pieces this peer has
     , peerPieces :: !(Set Int)
+    {- | What piece we might be requesting
+
+    We choose to download pieces reactively, so we need to know
+    if we're already requesting a piece to avoid jumping on another one.
+    -}
+    , peerRequesting :: !(Maybe Int)
     }
 
 -- | The peer state at the start of communication
 initialPeerState :: PeerState
-initialPeerState = PeerState True False True False Set.empty
+initialPeerState = PeerState True False True False Set.empty Nothing
 
 
 -- | The information needed in a peer computation
@@ -248,11 +255,17 @@ sendToWriter msg = do
 -- | Modify our state based on a message, and send back a reply
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = case msg of
-    Choke                 -> modify (\ps -> ps { peerIsChoking = True })
-    UnChoke               -> modify (\ps -> ps { peerIsChoking = False })
-    Interested            -> modify (\ps -> ps { peerIsInterested = True })
-    UnInterested          -> modify (\ps -> ps { peerIsInterested = False })
-    Have    piece         -> addPiece piece
+    Choke        -> modify (\ps -> ps { peerIsChoking = True })
+    UnChoke      -> modify (\ps -> ps { peerIsChoking = False })
+    Interested   -> modify (\ps -> ps { peerIsInterested = True })
+    UnInterested -> modify (\ps -> ps { peerIsInterested = False })
+    Have piece   -> do
+        addPiece piece
+        whenJustM getRarestPiece $ \next -> do
+            sendMessage Interested
+            requesting <- gets peerRequesting
+            modify (\ps -> ps { peerRequesting = requesting <|> Just next })
+            unlessM (gets peerIsChoking) (request piece)
     Request info          -> sendToWriter (PieceRequest info)
     RecvBlock index bytes -> writeBlockM index bytes
     _                     -> undefined
@@ -269,8 +282,18 @@ getRarestPiece = do
     theirPieces <- gets peerPieces
     ourPieces   <- asks peerMOurPieces >>= readTVarIO
     pieceArr    <- asks peerMPieces
-    let wantedPiece (i, _) = Set.member i (Set.difference theirPieces ourPieces) 
+    let wantedPiece (i, _) =
+            Set.member i (Set.difference theirPieces ourPieces)
     counts <- traverse getCount $ filter wantedPiece (assocs pieceArr)
     -- TODO: randomise this somewhat
     return . fmap fst . viaNonEmpty head $ sortOn snd counts
     where getCount (i, var) = (,) i <$> readTVarIO var
+
+{- | Send a request for a particular piece.
+
+This will sometimes do nothing if no further blocks are available for that
+piece. The time to switch to requesting a different piece is when
+we send a have message to the peer.
+-}
+request :: Int -> PeerM ()
+request piece = whenJustM (nextBlockM piece) $ sendMessage . Request
