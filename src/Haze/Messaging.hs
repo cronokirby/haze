@@ -24,3 +24,5 @@ data PeerToWriter
 data WriterToPeer
     -- | The writer is fulfilling a 'PieceRequest'
     = PieceFulfilled !BlockIndex !ByteString
+    -- | A new piece has just been saved
+    | PieceAcquired !Int

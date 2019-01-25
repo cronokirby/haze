@@ -39,6 +39,7 @@ import           Haze.Bits                      ( encodeIntegralN
                                                 , parse16
                                                 )
 import           Haze.Messaging                 ( PeerToWriter(..)
+                                                , WriterToPeer(..)
                                                 )
 import           Haze.PieceBuffer               ( PieceBuffer
                                                 , BlockInfo(..)
@@ -229,6 +230,10 @@ addPiece piece = do
         let pieces = peerPieces ps
         in  ps { peerPieces = Set.insert piece pieces }
 
+-- | Send a message to the peer connection
+sendMessage :: Message -> PeerM ()
+sendMessage = undefined
+
 -- | Send a message to the writer
 sendToWriter :: PeerToWriter -> PeerM ()
 sendToWriter msg = do
@@ -243,7 +248,13 @@ reactToMessage msg = case msg of
     UnChoke               -> modify (\ps -> ps { peerIsChoking = False })
     Interested            -> modify (\ps -> ps { peerIsInterested = True })
     UnInterested          -> modify (\ps -> ps { peerIsInterested = False })
-    Have piece            -> addPiece piece
+    Have    piece         -> addPiece piece
     Request info          -> sendToWriter (PieceRequest info)
     RecvBlock index bytes -> writeBlockM index bytes
     _                     -> undefined
+
+-- | React to messages sent by the writer
+reactToWriter :: WriterToPeer -> PeerM ()
+reactToWriter msg = case msg of
+    PieceFulfilled index bytes -> sendMessage (RecvBlock index bytes)
+    PieceAcquired piece        -> sendMessage (Have piece)
