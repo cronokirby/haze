@@ -27,10 +27,12 @@ import           Control.Exception.Safe         ( Exception
 import           Data.Attoparsec.ByteString    as AP
 import           Data.Array                     ( Array
                                                 , (!)
+                                                , assocs
                                                 , bounds
                                                 )
 import qualified Data.ByteString               as BS
 import           Data.Ix                        ( inRange )
+import           Data.List                      ( minimumBy )
 import qualified Data.Set                      as Set
 import           Network.Socket                 ( PortNumber )
 
@@ -178,6 +180,8 @@ data PeerMInfo = PeerMInfo
     { peerMState :: !(IORef PeerState) -- ^ The local state
     -- | A map from piece index to piece count, used for rarity calcs
     , peerMPieces :: !(Array Int (TVar Int))
+    -- | The pieces we currently have
+    , peerMOurPieces :: !(TVar (Set Int))
     -- | The piece buffer shared with everyone else
     , peerMBuffer :: !(TVar PieceBuffer)
     -- | The out bound message queue to the piece writer
@@ -258,3 +262,15 @@ reactToWriter :: WriterToPeer -> PeerM ()
 reactToWriter msg = case msg of
     PieceFulfilled index bytes -> sendMessage (RecvBlock index bytes)
     PieceAcquired piece        -> sendMessage (Have piece)
+
+-- | Get the rarest piece that the peer claims to have, and that we don't
+getRarestPiece :: PeerM (Maybe Int)
+getRarestPiece = do
+    theirPieces <- gets peerPieces
+    ourPieces   <- asks peerMOurPieces >>= readTVarIO
+    pieceArr    <- asks peerMPieces
+    let wantedPiece (i, _) = Set.member i (Set.difference theirPieces ourPieces) 
+    counts <- traverse getCount $ filter wantedPiece (assocs pieceArr)
+    -- TODO: randomise this somewhat
+    return . fmap fst . viaNonEmpty head $ sortOn snd counts
+    where getCount (i, var) = (,) i <$> readTVarIO var
