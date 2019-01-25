@@ -148,15 +148,15 @@ parseMessages callback bytes = do
 
 -- | Represents the state of p2p communication
 data PeerState = PeerState
-    { peerIsChoking :: Bool -- ^ We're being choked by the peer
+    { peerIsChoking :: !Bool -- ^ We're being choked by the peer
     -- | The peer is interested in us
-    , peerIsInterested :: Bool
+    , peerIsInterested :: !Bool
     -- | We are choking the peer
-    , peerAmChoking :: Bool
+    , peerAmChoking :: !Bool
     -- | We're interested in the peer 
-    , peerAmInterested :: Bool
+    , peerAmInterested :: !Bool
     -- | The set of pieces this peer has
-    , peerPieces :: Set Int
+    , peerPieces :: !(Set Int)
     }
 
 -- | The peer state at the start of communication
@@ -166,9 +166,9 @@ initialPeerState = PeerState True False True False Set.empty
 
 -- | The information needed in a peer computation
 data PeerMInfo = PeerMInfo
-    { peerMState :: IORef PeerState -- ^ The local state
+    { peerMState :: !(IORef PeerState) -- ^ The local state
     -- | A map from piece index to piece count, used for rarity calcs
-    , peerMPieces :: Array Int (TVar Int)
+    , peerMPieces :: !(Array Int (TVar Int))
     }
 
 -- | Represents computations for a peer
