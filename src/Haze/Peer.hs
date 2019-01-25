@@ -17,6 +17,9 @@ where
 
 import           Relude
 
+import           Control.Concurrent.STM.TBQueue ( TBQueue
+                                                , writeTBQueue
+                                                )
 import           Control.Exception.Safe         ( Exception
                                                 , MonadThrow
                                                 , throw
@@ -35,6 +38,8 @@ import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
                                                 , parse16
                                                 )
+import           Haze.Messaging                 ( PeerToWriter(..)
+                                                )
 import           Haze.PieceBuffer               ( PieceBuffer
                                                 , BlockInfo(..)
                                                 , BlockIndex(..)
@@ -46,7 +51,7 @@ import           Haze.PieceBuffer               ( PieceBuffer
 
 -- | The messages sent between peers in a torrent
 data Message
-    -- | Used to keep the connection open (think PING)
+    -- | Used to keep the connection open (think PING
     = KeepAlive
     -- | The sender has choked the receiver
     | Choke
@@ -174,6 +179,8 @@ data PeerMInfo = PeerMInfo
     , peerMPieces :: !(Array Int (TVar Int))
     -- | The piece buffer shared with everyone else
     , peerMBuffer :: !(TVar PieceBuffer)
+    -- | The out bound message queue to the piece writer
+    , peerMToWriter :: !(TBQueue PeerToWriter)
     }
 
 -- | Represents computations for a peer
@@ -188,7 +195,7 @@ instance MonadState PeerState PeerM where
         let (a, st') = f st
         writeIORef stRef st'
         return a
-    
+
 instance HasPieceBuffer PeerM where
     getPieceBuffer = asks peerMBuffer
 
@@ -222,14 +229,21 @@ addPiece piece = do
         let pieces = peerPieces ps
         in  ps { peerPieces = Set.insert piece pieces }
 
+-- | Send a message to the writer
+sendToWriter :: PeerToWriter -> PeerM ()
+sendToWriter msg = do
+    q <- asks peerMToWriter
+    atomically $ writeTBQueue q msg
+
 
 -- | Modify our state based on a message, and send back a reply
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = case msg of
-    Choke        -> modify (\ps -> ps { peerIsChoking = True })
-    UnChoke      -> modify (\ps -> ps { peerIsChoking = False })
-    Interested   -> modify (\ps -> ps { peerIsInterested = True })
-    UnInterested -> modify (\ps -> ps { peerIsInterested = False })
-    Have piece   -> addPiece piece
+    Choke                 -> modify (\ps -> ps { peerIsChoking = True })
+    UnChoke               -> modify (\ps -> ps { peerIsChoking = False })
+    Interested            -> modify (\ps -> ps { peerIsInterested = True })
+    UnInterested          -> modify (\ps -> ps { peerIsInterested = False })
+    Have piece            -> addPiece piece
+    Request info          -> sendToWriter (PieceRequest info)
     RecvBlock index bytes -> writeBlockM index bytes
-    _            -> undefined
+    _                     -> undefined
