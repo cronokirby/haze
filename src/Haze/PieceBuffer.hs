@@ -20,7 +20,7 @@ module Haze.PieceBuffer
     , writeBlock
     , saveCompletePieces
     , bufferBytes
-    , HasPieceBuffer
+    , HasPieceBuffer(..)
     , nextBlockM
     , writeBlockM
     , saveCompletePiecesM

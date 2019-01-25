@@ -35,9 +35,12 @@ import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
                                                 , parse16
                                                 )
-import           Haze.PieceBuffer               ( BlockInfo(..)
+import           Haze.PieceBuffer               ( PieceBuffer
+                                                , BlockInfo(..)
                                                 , BlockIndex(..)
                                                 , makeBlockInfo
+                                                , HasPieceBuffer(..)
+                                                , writeBlockM
                                                 )
 
 
@@ -169,6 +172,8 @@ data PeerMInfo = PeerMInfo
     { peerMState :: !(IORef PeerState) -- ^ The local state
     -- | A map from piece index to piece count, used for rarity calcs
     , peerMPieces :: !(Array Int (TVar Int))
+    -- | The piece buffer shared with everyone else
+    , peerMBuffer :: !(TVar PieceBuffer)
     }
 
 -- | Represents computations for a peer
@@ -183,6 +188,9 @@ instance MonadState PeerState PeerM where
         let (a, st') = f st
         writeIORef stRef st'
         return a
+    
+instance HasPieceBuffer PeerM where
+    getPieceBuffer = asks peerMBuffer
 
 
 -- | Represents the different types of exceptions with a peer
@@ -223,4 +231,5 @@ reactToMessage msg = case msg of
     Interested   -> modify (\ps -> ps { peerIsInterested = True })
     UnInterested -> modify (\ps -> ps { peerIsInterested = False })
     Have piece   -> addPiece piece
+    RecvBlock index bytes -> writeBlockM index bytes
     _            -> undefined
