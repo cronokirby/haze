@@ -22,9 +22,12 @@ import           Control.Exception.Safe         ( Exception
                                                 , throw
                                                 )
 import           Data.Attoparsec.ByteString    as AP
+import           Data.Array                     ( Array
+                                                , (!)
+                                                , bounds
+                                                )
 import qualified Data.ByteString               as BS
-import           Data.IntMap                    ( IntMap )
-import qualified Data.IntMap                   as IntMap
+import           Data.Ix                        ( inRange )
 import qualified Data.Set                      as Set
 import           Network.Socket                 ( PortNumber )
 
@@ -165,7 +168,7 @@ initialPeerState = PeerState True False True False Set.empty
 data PeerMInfo = PeerMInfo
     { peerMState :: IORef PeerState -- ^ The local state
     -- | A map from piece index to piece count, used for rarity calcs
-    , peerMPieces :: IntMap (TVar Int)
+    , peerMPieces :: Array Int (TVar Int)
     }
 
 -- | Represents computations for a peer
@@ -183,7 +186,7 @@ instance MonadState PeerState PeerM where
 
 
 -- | Represents the different types of exceptions with a peer
-data PeerException 
+data PeerException
     -- | The peer committed a fatal mistake in communication
     = PeerMistakeException
     deriving (Show)
@@ -203,11 +206,9 @@ cancel = throw PeerMistakeException
 addPiece :: Int -> PeerM ()
 addPiece piece = do
     pieces <- asks peerMPieces
-    case IntMap.lookup piece pieces of
-        Just var -> do
-            atomically $ modifyTVar' var (+ 1)
-            modify (addLocalPiece piece)
-        Nothing -> cancel
+    unless (inRange (bounds pieces) piece) cancel
+    atomically $ modifyTVar' (pieces ! piece) (+ 1)
+    modify (addLocalPiece piece)
   where
     addLocalPiece piece ps =
         let pieces = peerPieces ps
