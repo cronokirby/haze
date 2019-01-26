@@ -256,10 +256,10 @@ sendToWriter msg = do
 -- | Modify our state based on a message, and send back a reply
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = case msg of
-    Choke        -> modify (\ps -> ps { peerIsChoking = True })
-    UnChoke      -> do
+    Choke   -> modify (\ps -> ps { peerIsChoking = True })
+    UnChoke -> do
         modify (\ps -> ps { peerIsChoking = False })
-        whenJustM getRarestPiece request
+        requestRarestPiece
     Interested   -> modify (\ps -> ps { peerIsInterested = True })
     UnInterested -> modify (\ps -> ps { peerIsInterested = False })
     Have piece   -> do
@@ -279,7 +279,10 @@ reactToMessage msg = case msg of
 reactToWriter :: WriterToPeer -> PeerM ()
 reactToWriter msg = case msg of
     PieceFulfilled index bytes -> sendMessage (RecvBlock index bytes)
-    PieceAcquired piece        -> sendMessage (Have piece)
+    PieceAcquired piece        -> do
+        sendMessage (Have piece)
+        whenNothingM_ (gets peerRequested) requestRarestPiece
+
 
 -- | Get the rarest piece that the peer claims to have, and that we don't
 getRarestPiece :: PeerM (Maybe Int)
@@ -303,6 +306,10 @@ we send a have message to the peer.
 request :: Int -> PeerM ()
 request piece = nextBlockM piece >>= \case
     Just info -> do
-        modify (\ps -> ps { peerRequested = Just piece})
+        modify (\ps -> ps { peerRequested = Just piece })
         sendMessage (Request info)
     Nothing -> modify (\ps -> ps { peerRequested = Nothing })
+
+-- | Try and request the rarest piece
+requestRarestPiece :: PeerM ()
+requestRarestPiece = whenJustM getRarestPiece request
