@@ -270,7 +270,8 @@ reactToMessage msg = case msg of
             case (choking, requested) of
                 (False, Nothing) -> request next
                 (_    , _      ) -> return ()
-    Request info          -> sendToWriter (PieceRequest info)
+    Request info          -> 
+        unlessM (gets peerAmChoking) (sendToWriter (PieceRequest info))
     RecvBlock index bytes -> do
         writeBlockM index bytes
         whenJustM (gets peerRequested) request
