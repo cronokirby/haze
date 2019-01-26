@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {- |
 Description: Contains types and functions related to peer communication.
@@ -300,6 +301,8 @@ piece. The time to switch to requesting a different piece is when
 we send a have message to the peer.
 -}
 request :: Int -> PeerM ()
-request piece = whenJustM (nextBlockM piece) $ \info -> do
-    modify (\ps -> ps { peerRequested = Just piece })
-    sendMessage (Request info)
+request piece = nextBlockM piece >>= \case
+    Just info -> do
+        modify (\ps -> ps { peerRequested = Just piece})
+        sendMessage (Request info)
+    Nothing -> modify (\ps -> ps { peerRequested = Nothing })
