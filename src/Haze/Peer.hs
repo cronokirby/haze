@@ -272,7 +272,9 @@ reactToMessage msg = case msg of
                 (False, Nothing) -> request next
                 (_    , _      ) -> return ()
     Request info          -> sendToWriter (PieceRequest info)
-    RecvBlock index bytes -> writeBlockM index bytes
+    RecvBlock index bytes -> do
+        writeBlockM index bytes
+        whenJustM (gets peerRequested) request
     _                     -> undefined
 
 -- | React to messages sent by the writer
