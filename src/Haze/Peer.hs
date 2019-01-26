@@ -256,7 +256,9 @@ sendToWriter msg = do
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = case msg of
     Choke        -> modify (\ps -> ps { peerIsChoking = True })
-    UnChoke      -> modify (\ps -> ps { peerIsChoking = False })
+    UnChoke      -> do
+        modify (\ps -> ps { peerIsChoking = False })
+        whenJustM getRarestPiece request
     Interested   -> modify (\ps -> ps { peerIsInterested = True })
     UnInterested -> modify (\ps -> ps { peerIsInterested = False })
     Have piece   -> do
@@ -267,7 +269,7 @@ reactToMessage msg = case msg of
             choking   <- gets peerIsChoking
             case (choking, requested) of
                 (False, Nothing) -> request next
-                (_    , _) -> return ()
+                (_    , _      ) -> return ()
     Request info          -> sendToWriter (PieceRequest info)
     RecvBlock index bytes -> writeBlockM index bytes
     _                     -> undefined
