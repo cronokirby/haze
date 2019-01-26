@@ -169,12 +169,12 @@ data PeerState = PeerState
     , peerAmInterested :: !Bool
     -- | The set of pieces this peer has
     , peerPieces :: !(Set Int)
-    {- | What piece we might be requesting
+    {- | What piece we might have already requested
 
     We choose to download pieces reactively, so we need to know
-    if we're already requesting a piece to avoid jumping on another one.
+    if we've already downloaded a piece to avoid jumping on another one.
     -}
-    , peerRequesting :: !(Maybe Int)
+    , peerRequested :: !(Maybe Int)
     }
 
 -- | The peer state at the start of communication
@@ -263,9 +263,11 @@ reactToMessage msg = case msg of
         addPiece piece
         whenJustM getRarestPiece $ \next -> do
             sendMessage Interested
-            requesting <- gets peerRequesting
-            modify (\ps -> ps { peerRequesting = requesting <|> Just next })
-            unlessM (gets peerIsChoking) (request piece)
+            requested <- gets peerRequested
+            choking   <- gets peerIsChoking
+            case (choking, requested) of
+                (False, Nothing) -> request next
+                (_    , _) -> return ()
     Request info          -> sendToWriter (PieceRequest info)
     RecvBlock index bytes -> writeBlockM index bytes
     _                     -> undefined
@@ -296,4 +298,6 @@ piece. The time to switch to requesting a different piece is when
 we send a have message to the peer.
 -}
 request :: Int -> PeerM ()
-request piece = whenJustM (nextBlockM piece) $ sendMessage . Request
+request piece = whenJustM (nextBlockM piece) $ \info -> do
+    modify (\ps -> ps { peerRequested = Just piece })
+    sendMessage (Request info)
