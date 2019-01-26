@@ -282,7 +282,9 @@ reactToWriter msg = case msg of
     PieceFulfilled index bytes -> sendMessage (RecvBlock index bytes)
     PieceAcquired piece        -> do
         sendMessage (Have piece)
-        whenNothingM_ (gets peerRequested) requestRarestPiece
+        requested <- gets peerRequested
+        choking <- gets peerIsChoking
+        when (not choking && isNothing requested) requestRarestPiece
 
 
 -- | Get the rarest piece that the peer claims to have, and that we don't
