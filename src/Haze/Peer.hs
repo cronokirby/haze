@@ -270,12 +270,12 @@ reactToMessage msg = case msg of
             case (choking, requested) of
                 (False, Nothing) -> request next
                 (_    , _      ) -> return ()
-    Request info          -> 
+    Request info ->
         unlessM (gets peerAmChoking) (sendToWriter (PieceRequest info))
     RecvBlock index bytes -> do
         writeBlockM index bytes
         whenJustM (gets peerRequested) request
-    _                     -> undefined
+    _ -> undefined
 
 -- | React to messages sent by the writer
 reactToWriter :: WriterToPeer -> PeerM ()
@@ -284,7 +284,7 @@ reactToWriter msg = case msg of
     PieceAcquired piece        -> do
         sendMessage (Have piece)
         requested <- gets peerRequested
-        choking <- gets peerIsChoking
+        choking   <- gets peerIsChoking
         when (not choking && isNothing requested) requestRarestPiece
 
 
