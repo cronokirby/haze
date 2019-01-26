@@ -33,7 +33,6 @@ import           Data.Array                     ( Array
                                                 )
 import qualified Data.ByteString               as BS
 import           Data.Ix                        ( inRange )
-import           Data.List                      ( minimumBy )
 import qualified Data.Set                      as Set
 import           Network.Socket                 ( PortNumber )
 
