@@ -193,7 +193,7 @@ data BlockIndex = BlockIndex
     { blockPiece :: !Int -- ^ The index of the piece this is in
     , blockOffset :: !Int -- ^ The offset of this block inside the piece
     }
-    deriving (Eq, Show)
+    deriving (Eq, Ord, Show)
 
 -- | Represents the information about a block peers send to eachother
 data BlockInfo = BlockInfo

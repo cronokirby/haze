@@ -175,11 +175,13 @@ data PeerState = PeerState
     if we've already downloaded a piece to avoid jumping on another one.
     -}
     , peerRequested :: !(Maybe Int)
+    -- | A set of blocks we shouldn't send off
+    , peerShouldCancel :: !(Set BlockIndex)
     }
 
 -- | The peer state at the start of communication
 initialPeerState :: PeerState
-initialPeerState = PeerState True False True False Set.empty Nothing
+initialPeerState = PeerState True False True False Set.empty Nothing Set.empty
 
 
 -- | The information needed in a peer computation
@@ -255,8 +257,9 @@ sendToWriter msg = do
 -- | Modify our state based on a message, and send back a reply
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = case msg of
-    Choke   -> modify (\ps -> ps { peerIsChoking = True })
-    UnChoke -> do
+    KeepAlive -> undefined
+    Choke     -> modify (\ps -> ps { peerIsChoking = True })
+    UnChoke   -> do
         modify (\ps -> ps { peerIsChoking = False })
         requestRarestPiece
     Interested   -> modify (\ps -> ps { peerIsInterested = True })
@@ -275,14 +278,20 @@ reactToMessage msg = case msg of
     RecvBlock index bytes -> do
         writeBlockM index bytes
         whenJustM (gets peerRequested) request
+    Cancel (BlockInfo index _) -> do
+        toCancel <- gets peerShouldCancel
+        let toCancel' = Set.insert index toCancel
+        modify (\ps -> ps { peerShouldCancel = toCancel' })
     Port _ -> return ()
-    _ -> undefined
 
 -- | React to messages sent by the writer
 reactToWriter :: WriterToPeer -> PeerM ()
 reactToWriter msg = case msg of
-    PieceFulfilled index bytes -> sendMessage (RecvBlock index bytes)
-    PieceAcquired piece        -> do
+    PieceFulfilled index bytes -> do
+        shouldCancel <- gets peerShouldCancel
+        unless (Set.member index shouldCancel)
+            $ sendMessage (RecvBlock index bytes)
+    PieceAcquired piece -> do
         sendMessage (Have piece)
         requested <- gets peerRequested
         choking   <- gets peerIsChoking
