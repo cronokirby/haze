@@ -275,6 +275,7 @@ reactToMessage msg = case msg of
     RecvBlock index bytes -> do
         writeBlockM index bytes
         whenJustM (gets peerRequested) request
+    Port _ -> return ()
     _ -> undefined
 
 -- | React to messages sent by the writer
