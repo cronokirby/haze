@@ -18,6 +18,7 @@ where
 
 import           Relude
 
+import           Control.Concurrent             ( threadDelay )
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , writeTBQueue
                                                 )
@@ -177,11 +178,14 @@ data PeerState = PeerState
     , peerRequested :: !(Maybe Int)
     -- | A set of blocks we shouldn't send off
     , peerShouldCancel :: !(Set BlockIndex)
+    -- | Used to cancel if no messages are received
+    , peerKeepAlive :: !Bool
     }
 
 -- | The peer state at the start of communication
 initialPeerState :: PeerState
-initialPeerState = PeerState True False True False Set.empty Nothing Set.empty
+initialPeerState =
+    PeerState True False True False Set.empty Nothing Set.empty True
 
 
 -- | The information needed in a peer computation
@@ -206,7 +210,7 @@ instance MonadState PeerState PeerM where
     state f = do
         stRef <- asks peerMState
         atomically $ do
-            st    <- readTVar stRef
+            st <- readTVar stRef
             let (a, st') = f st
             writeTVar stRef st'
             return a
@@ -258,7 +262,7 @@ sendToWriter msg = do
 -- | Modify our state based on a message, and send back a reply
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = case msg of
-    KeepAlive -> undefined
+    KeepAlive -> return ()
     Choke     -> modify (\ps -> ps { peerIsChoking = True })
     UnChoke   -> do
         modify (\ps -> ps { peerIsChoking = False })
@@ -328,3 +332,17 @@ request piece = nextBlockM piece >>= \case
 -- | Try and request the rarest piece
 requestRarestPiece :: PeerM ()
 requestRarestPiece = whenJustM getRarestPiece request
+
+
+{- | A loop for a process that will kill the peer if messages aren't received
+
+The process reading messages from a socket should set `peerKeepAlive`
+to `True` when a message is received, to avoid this process cancelling.
+-}
+keepAliveLoop :: PeerM ()
+keepAliveLoop = do
+    liftIO . threadDelay $ 2 * 60 * 1000000
+    unlessM (gets peerKeepAlive) $ do
+        modify (\ps -> ps { peerKeepAlive = False })
+        keepAliveLoop
+    cancel
