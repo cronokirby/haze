@@ -186,7 +186,7 @@ initialPeerState = PeerState True False True False Set.empty Nothing Set.empty
 
 -- | The information needed in a peer computation
 data PeerMInfo = PeerMInfo
-    { peerMState :: !(IORef PeerState) -- ^ The local state
+    { peerMState :: !(TVar PeerState) -- ^ The local state
     -- | A map from piece index to piece count, used for rarity calcs
     , peerMPieces :: !(Array Int (TVar Int))
     -- | The pieces we currently have
@@ -205,10 +205,11 @@ newtype PeerM a = PeerM (ReaderT PeerMInfo IO a)
 instance MonadState PeerState PeerM where
     state f = do
         stRef <- asks peerMState
-        st    <- readIORef stRef
-        let (a, st') = f st
-        writeIORef stRef st'
-        return a
+        atomically $ do
+            st    <- readTVar stRef
+            let (a, st') = f st
+            writeTVar stRef st'
+            return a
 
 instance HasPieceBuffer PeerM where
     getPieceBuffer = asks peerMBuffer
