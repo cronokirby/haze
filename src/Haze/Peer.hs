@@ -262,7 +262,7 @@ sendToWriter msg = do
 -- | Modify our state based on a message, and send back a reply
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = case msg of
-    KeepAlive -> return ()
+    KeepAlive -> modify (\ps -> ps { peerKeepAlive = True })
     Choke     -> modify (\ps -> ps { peerIsChoking = True })
     UnChoke   -> do
         modify (\ps -> ps { peerIsChoking = False })
