@@ -35,7 +35,10 @@ import           Data.Array                     ( Array
 import qualified Data.ByteString               as BS
 import           Data.Ix                        ( inRange )
 import qualified Data.Set                      as Set
-import           Network.Socket                 ( PortNumber )
+import           Network.Socket                 ( PortNumber
+                                                , Socket
+                                                )
+import           Network.Socket.ByteString      ( recv, sendAll )
 
 import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
@@ -199,6 +202,8 @@ data PeerMInfo = PeerMInfo
     , peerMBuffer :: !(TVar PieceBuffer)
     -- | The out bound message queue to the piece writer
     , peerMToWriter :: !(TBQueue PeerToWriter)
+    -- | The socket connection for this peer
+    , peerMSocket :: !Socket
     }
 
 -- | Represents computations for a peer
@@ -250,7 +255,9 @@ addPiece piece = do
 
 -- | Send a message to the peer connection
 sendMessage :: Message -> PeerM ()
-sendMessage = undefined
+sendMessage msg = do
+    socket <- asks peerMSocket
+    liftIO $ sendAll socket (encodeMessage msg)
 
 -- | Send a message to the writer
 sendToWriter :: PeerToWriter -> PeerM ()
