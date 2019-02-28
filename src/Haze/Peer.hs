@@ -353,3 +353,15 @@ keepAliveLoop = do
         modify (\ps -> ps { peerKeepAlive = False })
         keepAliveLoop
     cancel
+
+{- | A loop for a process that will receive, parse, and react to messages.
+-}
+recvLoop :: ParseCallBack -> PeerM ()
+recvLoop cb = do
+    socket <- asks peerMSocket
+    bytes <- liftIO $ recv socket 1024
+    case parseMessages cb bytes of
+        Nothing -> cancel
+        Just (msgs, cb') -> do
+            forM_ msgs reactToMessage
+            recvLoop cb'
