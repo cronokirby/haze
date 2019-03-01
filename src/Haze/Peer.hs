@@ -183,10 +183,12 @@ data PeerState = PeerState
     , peerShouldCancel :: !(Set BlockIndex)
     -- | Used to cancel if no messages are received
     , peerKeepAlive :: !Bool
+    -- | The socket connection for this peer
+    , peerSocket :: !Socket
     }
 
 -- | The peer state at the start of communication
-initialPeerState :: PeerState
+initialPeerState :: Socket -> PeerState
 initialPeerState =
     PeerState True False True False Set.empty Nothing Set.empty True
 
@@ -202,8 +204,6 @@ data PeerMInfo = PeerMInfo
     , peerMBuffer :: !(TVar PieceBuffer)
     -- | The out bound message queue to the piece writer
     , peerMToWriter :: !(TBQueue PeerToWriter)
-    -- | The socket connection for this peer
-    , peerMSocket :: !Socket
     }
 
 -- | Represents computations for a peer
@@ -256,7 +256,7 @@ addPiece piece = do
 -- | Send a message to the peer connection
 sendMessage :: Message -> PeerM ()
 sendMessage msg = do
-    socket <- asks peerMSocket
+    socket <- gets peerSocket
     liftIO $ sendAll socket (encodeMessage msg)
 
 -- | Send a message to the writer
@@ -358,7 +358,7 @@ keepAliveLoop = do
 -}
 recvLoop :: ParseCallBack -> PeerM ()
 recvLoop cb = do
-    socket <- asks peerMSocket
+    socket <- gets peerSocket
     bytes <- liftIO $ recv socket 1024
     case parseMessages cb bytes of
         Nothing -> cancel
