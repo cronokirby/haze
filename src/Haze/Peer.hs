@@ -35,10 +35,16 @@ import           Data.Array                     ( Array
 import qualified Data.ByteString               as BS
 import           Data.Ix                        ( inRange )
 import qualified Data.Set                      as Set
+import           Data.Time.Clock                ( UTCTime
+                                                , diffUTCTime
+                                                , getCurrentTime
+                                                )
 import           Network.Socket                 ( PortNumber
                                                 , Socket
                                                 )
-import           Network.Socket.ByteString      ( recv, sendAll )
+import           Network.Socket.ByteString      ( recv
+                                                , sendAll
+                                                )
 
 import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
@@ -204,6 +210,13 @@ data PeerMInfo = PeerMInfo
     , peerMBuffer :: !(TVar PieceBuffer)
     -- | The out bound message queue to the piece writer
     , peerMToWriter :: !(TBQueue PeerToWriter)
+    {- | This contains the download rate in bytes / second
+
+    This is exposed to other people mainly so that the manager can
+    choose which sockets to reciprocate downloading to, so that it can
+    tell the peers managing those to do so.
+    -}
+    , peerMDLRate :: !(TVar Double)
     }
 
 -- | Represents computations for a peer
@@ -356,12 +369,17 @@ keepAliveLoop = do
 
 {- | A loop for a process that will receive, parse, and react to messages.
 -}
-recvLoop :: ParseCallBack -> PeerM ()
-recvLoop cb = do
+recvLoop :: ParseCallBack -> UTCTime -> PeerM ()
+recvLoop cb thn = do
     socket <- gets peerSocket
-    bytes <- liftIO $ recv socket 1024
+    bytes  <- liftIO $ recv socket 1024
+    dlRate <- asks peerMDLRate
+    now    <- liftIO getCurrentTime
+    let delta = diffUTCTime now thn
+        rate = fromIntegral (BS.length bytes) / fromRational (toRational delta)
+    atomically $ writeTVar dlRate rate
     case parseMessages cb bytes of
-        Nothing -> cancel
+        Nothing          -> cancel
         Just (msgs, cb') -> do
             forM_ msgs reactToMessage
-            recvLoop cb'
+            recvLoop cb' now
