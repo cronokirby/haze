@@ -51,6 +51,7 @@ import           Haze.Bits                      ( encodeIntegralN
                                                 , parse16
                                                 )
 import           Haze.Messaging                 ( PeerToWriter(..)
+                                                , ManagerToPeer(..)
                                                 , WriterToPeer(..)
                                                 )
 import           Haze.PieceBuffer               ( PieceBuffer
@@ -321,6 +322,13 @@ reactToWriter msg = case msg of
         requested <- gets peerRequested
         choking   <- gets peerIsChoking
         when (not choking && isNothing requested) requestRarestPiece
+
+
+-- | React to messages sent from the manager
+reactToManager :: ManagerToPeer -> PeerM ()
+reactToManager PeerIsWorthy = do
+    modify (\ps -> ps { peerAmChoking = False })
+    sendMessage UnChoke
 
 
 -- | Get the rarest piece that the peer claims to have, and that we don't

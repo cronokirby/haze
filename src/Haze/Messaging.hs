@@ -6,6 +6,7 @@ and to let us have an abstract specification of the adequate behavior.
 -}
 module Haze.Messaging 
     ( PeerToWriter(..)
+    , ManagerToPeer(..)
     , WriterToPeer(..)
     )
 where
@@ -26,3 +27,8 @@ data WriterToPeer
     = PieceFulfilled !BlockIndex !ByteString
     -- | A new piece has just been saved
     | PieceAcquired !Int
+
+-- | Messages sent from the manager to a peer
+data ManagerToPeer
+    -- | The peer should start reciprocating requests
+    = PeerIsWorthy
