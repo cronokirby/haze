@@ -19,9 +19,11 @@ where
 import           Relude
 
 import           Control.Concurrent             ( threadDelay )
+import           Control.Concurrent.Async       ( async, waitAnyCatchCancel )
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , writeTBQueue
                                                 )
+import Control.Concurrent.STM.TChan (TChan, readTChan)
 import           Control.Exception.Safe         ( Exception
                                                 , MonadThrow
                                                 , throw
@@ -211,6 +213,10 @@ data PeerMInfo = PeerMInfo
     , peerMBuffer :: !(TVar PieceBuffer)
     -- | The out bound message queue to the piece writer
     , peerMToWriter :: !(TBQueue PeerToWriter)
+    -- | The broadcast channel from the writer
+    , peerMFromWriter :: !(TChan WriterToPeer)
+    -- | The broadcast channel from the manager
+    , peerMFromManager :: !(TChan ManagerToPeer)
     {- | This contains the download rate in bytes / second
 
     This is exposed to other people mainly so that the manager can
@@ -236,6 +242,10 @@ instance MonadState PeerState PeerM where
 
 instance HasPieceBuffer PeerM where
     getPieceBuffer = asks peerMBuffer
+
+-- | Run a peer computation given the initial information it needs
+runPeerM :: PeerMInfo -> PeerM a -> IO a
+runPeerM r (PeerM rdr) = runReaderT rdr r
 
 
 -- | Represents the different types of exceptions with a peer
@@ -323,12 +333,26 @@ reactToWriter msg = case msg of
         choking   <- gets peerIsChoking
         when (not choking && isNothing requested) requestRarestPiece
 
+-- | Loop and react to messages sent by the writer
+writerLoop :: PeerM ()
+writerLoop = forever $ do
+    chan <- asks peerMFromWriter
+    msg <- atomically $ readTChan chan
+    reactToWriter msg
+
 
 -- | React to messages sent from the manager
 reactToManager :: ManagerToPeer -> PeerM ()
 reactToManager PeerIsWorthy = do
     modify (\ps -> ps { peerAmChoking = False })
     sendMessage UnChoke
+
+-- | A loop handling messages from the manager
+managerLoop :: PeerM ()
+managerLoop = forever $ do
+    chan <- asks peerMFromManager
+    msg <- atomically $ readTChan chan
+    reactToManager msg
 
 
 -- | Get the rarest piece that the peer claims to have, and that we don't
@@ -384,10 +408,28 @@ recvLoop cb thn = do
     dlRate <- asks peerMDLRate
     now    <- liftIO getCurrentTime
     let delta = diffUTCTime now thn
-        rate = fromIntegral (BS.length bytes) / fromRational (toRational delta)
+        rate  = fromIntegral (BS.length bytes) / fromRational (toRational delta)
     atomically $ writeTVar dlRate rate
     case parseMessages cb bytes of
         Nothing          -> cancel
         Just (msgs, cb') -> do
             forM_ msgs reactToMessage
             recvLoop cb' now
+    
+
+{- | Start the tree of processes given the initial information a peer needs.
+
+This will start and wait on 4 processes, one waiting on the socket,
+one waiting to receive from the piecewriter, one from the manager,
+and one waiting to kill the connection if it gets stale.
+-}
+startPeer :: PeerM ()
+startPeer = do
+    r <- ask
+    let startAsync = liftIO . async . runPeerM r
+    keepAlive <- startAsync keepAliveLoop
+    now       <- liftIO getCurrentTime
+    socket    <- startAsync (recvLoop firstParseCallBack now)
+    manager <- startAsync managerLoop
+    writer <- startAsync writerLoop
+    void . liftIO $ waitAnyCatchCancel [keepAlive, socket, manager, writer]
