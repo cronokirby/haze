@@ -19,11 +19,15 @@ where
 import           Relude
 
 import           Control.Concurrent             ( threadDelay )
-import           Control.Concurrent.Async       ( async, waitAnyCatchCancel )
+import           Control.Concurrent.Async       ( async
+                                                , waitAnyCatchCancel
+                                                )
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , writeTBQueue
                                                 )
-import Control.Concurrent.STM.TChan (TChan, readTChan)
+import           Control.Concurrent.STM.TChan   ( TChan
+                                                , readTChan
+                                                )
 import           Control.Exception.Safe         ( Exception
                                                 , MonadThrow
                                                 , throw
@@ -337,7 +341,7 @@ reactToWriter msg = case msg of
 writerLoop :: PeerM ()
 writerLoop = forever $ do
     chan <- asks peerMFromWriter
-    msg <- atomically $ readTChan chan
+    msg  <- atomically $ readTChan chan
     reactToWriter msg
 
 
@@ -351,7 +355,7 @@ reactToManager PeerIsWorthy = do
 managerLoop :: PeerM ()
 managerLoop = forever $ do
     chan <- asks peerMFromManager
-    msg <- atomically $ readTChan chan
+    msg  <- atomically $ readTChan chan
     reactToManager msg
 
 
@@ -415,7 +419,7 @@ recvLoop cb thn = do
         Just (msgs, cb') -> do
             forM_ msgs reactToMessage
             recvLoop cb' now
-    
+
 
 {- | Start the tree of processes given the initial information a peer needs.
 
@@ -430,6 +434,6 @@ startPeer = do
     keepAlive <- startAsync keepAliveLoop
     now       <- liftIO getCurrentTime
     socket    <- startAsync (recvLoop firstParseCallBack now)
-    manager <- startAsync managerLoop
-    writer <- startAsync writerLoop
+    manager   <- startAsync managerLoop
+    writer    <- startAsync writerLoop
     void . liftIO $ waitAnyCatchCancel [keepAlive, socket, manager, writer]
