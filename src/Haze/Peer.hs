@@ -395,13 +395,22 @@ requestRarestPiece = whenJustM getRarestPiece request
 The process reading messages from a socket should set `peerKeepAlive`
 to `True` when a message is received, to avoid this process cancelling.
 -}
-keepAliveLoop :: PeerM ()
-keepAliveLoop = do
-    liftIO . threadDelay $ 2 * 60 * 1000000
+checkKeepAliveLoop :: PeerM ()
+checkKeepAliveLoop = do
+    liftIO . threadDelay $ 2 * 60 * 1_000_000
     unlessM (gets peerKeepAlive) $ do
         modify (\ps -> ps { peerKeepAlive = False })
-        keepAliveLoop
+        checkKeepAliveLoop
     cancel
+
+{- | A loop for a process that sends a keep alive message every minute.
+
+This is needed to maintain a connection with the peer.
+-}
+sendKeepAliveLoop :: PeerM ()
+sendKeepAliveLoop = do
+    liftIO . threadDelay $ 60 * 1_000_000
+    sendMessage KeepAlive
 
 {- | A loop for a process that will receive, parse, and react to messages.
 -}
@@ -431,9 +440,11 @@ startPeer :: PeerM ()
 startPeer = do
     r <- ask
     let startAsync = liftIO . async . runPeerM r
-    keepAlive <- startAsync keepAliveLoop
+    checkAlive <- startAsync checkKeepAliveLoop
+    stayAlive <- startAsync sendKeepAliveLoop
     now       <- liftIO getCurrentTime
     socket    <- startAsync (recvLoop firstParseCallBack now)
     manager   <- startAsync managerLoop
     writer    <- startAsync writerLoop
-    void . liftIO $ waitAnyCatchCancel [keepAlive, socket, manager, writer]
+    void . liftIO $ waitAnyCatchCancel 
+        [checkAlive, stayAlive, socket, manager, writer]
