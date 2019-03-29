@@ -1,4 +1,4 @@
-resolver: lts-13.0
+resolver: lts-13.4
 
 extra-deps: 
   - unagi-chan-0.4.1.0
