@@ -206,7 +206,11 @@ initialPeerState =
     PeerState True False True False Set.empty Nothing Set.empty True
 
 
--- | The information needed in a peer computation
+{- | The information needed in a peer computation
+
+As opposed to PeerMState, the variables here can be shared with other
+sections of the code.
+-}
 data PeerMInfo = PeerMInfo
     { peerMState :: !(TVar PeerState) -- ^ The local state
     -- | A map from piece index to piece count, used for rarity calcs
