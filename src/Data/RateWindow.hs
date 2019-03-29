@@ -13,11 +13,13 @@ module Data.RateWindow
     )
 where
 
-import Relude
+import           Relude
 
-import Data.Sequence ((|>), Seq(..))
-import qualified Data.Sequence as Seq
-import qualified Data.Time.Clock as Time
+import           Data.Sequence                  ( (|>)
+                                                , Seq(..)
+                                                )
+import qualified Data.Sequence                 as Seq
+import qualified Data.Time.Clock               as Time
 
 
 -- | ByteCount is an Int, counting the number of bytes received over an interval
@@ -38,10 +40,10 @@ makeRateWindow maxSize = RateWindow maxSize Empty
 removeOldest :: RateWindow -> RateWindow
 removeOldest (RateWindow maxSize sq) =
     let sq' = if Seq.length sq >= maxSize then rmFront sq else sq
-    in RateWindow maxSize sq'
+    in  RateWindow maxSize sq'
   where
     rmFront :: Seq.Seq a -> Seq.Seq a
-    rmFront Empty = Empty
+    rmFront Empty        = Empty
     rmFront (_ :<| rest) = rest
 
 -- | Add a single download point to the rate window
@@ -54,4 +56,4 @@ getRate :: RateWindow -> Double
 getRate (RateWindow _ sq) =
     let add (acc1, acc2) (a, b) = (acc1 + a, acc2 + b)
         (count, delta) = foldl' add (0, 0) sq
-    in fromIntegral count / fromRational (toRational delta)
+    in  fromIntegral count / fromRational (toRational delta)

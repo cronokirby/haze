@@ -52,6 +52,11 @@ import           Network.Socket.ByteString      ( recv
                                                 , sendAll
                                                 )
 
+import Data.RateWindow                          ( RateWindow
+                                                , makeRateWindow
+                                                , addRatePoint
+                                                , getRate
+                                                )                                                
 import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
                                                 , parse16
@@ -418,20 +423,20 @@ sendKeepAliveLoop = do
 
 {- | A loop for a process that will receive, parse, and react to messages.
 -}
-recvLoop :: ParseCallBack -> UTCTime -> PeerM ()
-recvLoop cb thn = do
+recvLoop :: ParseCallBack -> UTCTime -> RateWindow -> PeerM ()
+recvLoop cb thn rates = do
     socket <- gets peerSocket
     bytes  <- liftIO $ recv socket 1024
     dlRate <- asks peerMDLRate
     now    <- liftIO getCurrentTime
     let delta = diffUTCTime now thn
-        rate  = fromIntegral (BS.length bytes) / fromRational (toRational delta)
-    atomically $ writeTVar dlRate rate
+        newRates  = addRatePoint (BS.length bytes) delta rates
+    atomically $ writeTVar dlRate (getRate newRates)
     case parseMessages cb bytes of
         Nothing          -> cancel
         Just (msgs, cb') -> do
             forM_ msgs reactToMessage
-            recvLoop cb' now
+            recvLoop cb' now newRates
 
 
 {- | Start the tree of processes given the initial information a peer needs.
@@ -447,7 +452,7 @@ startPeer = do
     checkAlive <- startAsync checkKeepAliveLoop
     stayAlive <- startAsync sendKeepAliveLoop
     now       <- liftIO getCurrentTime
-    socket    <- startAsync (recvLoop firstParseCallBack now)
+    socket    <- startAsync (recvLoop firstParseCallBack now (makeRateWindow 5))
     manager   <- startAsync managerLoop
     writer    <- startAsync writerLoop
     void . liftIO $ waitAnyCatchCancel 
