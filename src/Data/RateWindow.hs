@@ -3,6 +3,11 @@
 Description: contains functions for calculating download rates.
 
 This is mainly useful for calculating download rates for a peer.
+We can measure rates on a connection by looking at how many bytes we received
+in a packet, and the time elapsed since the last packet. The problem is that this
+"point-wise" estimate is prone to large fluctuations, so we want a smoothing
+mechanism. By using a sliding window of these data points, we can average them
+to get a better estimate of the rate.
 -}
 module Data.RateWindow
     ( RateWindow
@@ -29,6 +34,10 @@ type ByteCount = Int
 
 We can insert point intervals of downloads, and then average them out,
 in order to get a more accurate point of view on the download rate.
+
+The main data flow for this type should be first constructing it
+with 'makeRateWindow' then subsequently using 'addRatePoint' each time
+a packet is received, and 'getRate' to get the current rate estimate.
 -}
 data RateWindow = RateWindow Int (Seq.Seq (ByteCount, Time.NominalDiffTime))
 
@@ -51,7 +60,11 @@ addRatePoint :: ByteCount -> Time.NominalDiffTime -> RateWindow -> RateWindow
 addRatePoint count delta (RateWindow maxSize sq) =
     removeOldest $ RateWindow maxSize (sq |> (count, delta))
 
--- | GetRate gets the full average from the series of point stamps
+{- | Get the full average from the series of point stamps
+
+This returns (total bytes receieved) / (total seconds elapsed), giving
+a much smoother download rate compared to each tcp response.
+-}
 getRate :: RateWindow -> Double
 getRate (RateWindow _ sq) =
     let add (acc1, acc2) (a, b) = (acc1 + a, acc2 + b)

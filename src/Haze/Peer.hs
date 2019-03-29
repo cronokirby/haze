@@ -441,7 +441,8 @@ recvLoop cb thn rates = do
 
 {- | Start the tree of processes given the initial information a peer needs.
 
-This will start and wait on 4 processes, one waiting on the socket,
+This will start and wait on 5 processes, one waiting on the socket,
+one keeping the socket alive by sending heartbeats,
 one waiting to receive from the piecewriter, one from the manager,
 and one waiting to kill the connection if it gets stale.
 -}
