@@ -28,6 +28,7 @@ library
                        Haze.Client
                        Haze.Messaging
                        Haze.Peer
+                       Haze.PeerInfo
                        Haze.PieceBuffer
                        Haze.PieceWriter
                        Haze.Tracker

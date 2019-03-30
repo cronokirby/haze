@@ -220,7 +220,10 @@ data PeerMInfo = PeerMInfo
     { peerMState :: !(TVar PeerState) -- ^ The local state
     -- | A map from piece index to piece count, used for rarity calcs
     , peerMPieces :: !(Array Int (TVar Int))
-    -- | The pieces we currently have
+    {- | The pieces we currently have
+
+    The piecewriter is responsible for keeping this up to date
+    -}
     , peerMOurPieces :: !(TVar (Set Int))
     -- | The piece buffer shared with everyone else
     , peerMBuffer :: !(TVar PieceBuffer)
