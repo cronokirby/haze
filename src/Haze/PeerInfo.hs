@@ -45,5 +45,7 @@ data PeerHandle = PeerHandle
     , handleFromManager :: !(TChan ManagerToPeer)
     -- | The donwload rate for this peer
     , handleDLRate :: !(TVar Double)
+    -- | The peer associated with this handle
+    , handlePeer :: !Peer
     }
 

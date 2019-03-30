@@ -14,12 +14,18 @@ where
 import Relude
 
 import Haze.PieceBuffer (BlockIndex, BlockInfo)
+import Haze.Tracker (Peer)
 
 
 -- | Messages sent from peer clients to the piece writer
 data PeerToWriter
-    -- | The peer is requesting the data from a piece
-    = PieceRequest !BlockInfo
+    {- | The peer is requesting the data from a piece
+
+    We send our own information in order to get a response
+    -}
+    = PieceRequest !Peer !BlockInfo
+    -- | We've written to the piece buffer, and the writer should save 
+    | PieceBufferWritten
 
 -- | Messages sent from a writer to the peer
 data WriterToPeer

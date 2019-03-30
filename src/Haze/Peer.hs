@@ -74,6 +74,7 @@ import           Haze.PieceBuffer               ( PieceBuffer
                                                 , nextBlockM
                                                 , writeBlockM
                                                 )
+import Haze.Tracker (Peer)
 
 
 -- | The messages sent between peers in a torrent
@@ -241,6 +242,8 @@ data PeerMInfo = PeerMInfo
     tell the peers managing those to do so.
     -}
     , peerMDLRate :: !(TVar Double)
+    -- | The peer we're connected to, identifying this process
+    , peerMMyPeer :: !Peer
     }
 
 -- | Represents computations for a peer
@@ -326,10 +329,12 @@ reactToMessage msg = case msg of
             case (choking, requested) of
                 (False, Nothing) -> request next
                 (_    , _      ) -> return ()
-    Request info ->
-        unlessM (gets peerAmChoking) (sendToWriter (PieceRequest info))
+    Request info -> do
+        me <- asks peerMMyPeer
+        unlessM (gets peerAmChoking) (sendToWriter (PieceRequest me info))
     RecvBlock index bytes -> do
         writeBlockM index bytes
+        sendToWriter PieceBufferWritten
         whenJustM (gets peerRequested) request
     Cancel (BlockInfo index _) -> do
         toCancel <- gets peerShouldCancel
