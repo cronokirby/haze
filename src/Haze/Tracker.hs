@@ -48,6 +48,7 @@ import qualified Crypto.Hash.SHA1              as SHA1
 import qualified Data.Attoparsec.ByteString    as AP
 import qualified Data.ByteString               as BS
 import qualified Data.ByteString.Char8         as BSC
+import Data.Hashable (Hashable(..))
 import qualified Data.HashMap.Strict           as HM
 import qualified Data.Text                     as T
 import           Data.Time.Clock                ( UTCTime )
@@ -440,13 +441,21 @@ data AnnounceInfo = AnnounceInfo
     deriving (Show)
 
 
--- | Represents a peer in the swarm
+{- | Represents a peer in the swarm
+
+A Peer can be hashed, which will use it's peerID,
+if it has one, and the host name.
+-}
 data Peer = Peer
     { peerID :: !(Maybe Text)
     , peerHost :: !HostName
     , peerPort :: !PortNumber
     }
     deriving (Show)
+
+instance Hashable Peer where
+    hashWithSalt salt (Peer peerID host _)  = 
+        salt `hashWithSalt` peerID `hashWithSalt` host
 
 {- | This reads a bytestring announce from HTTP
 
