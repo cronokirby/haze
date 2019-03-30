@@ -13,7 +13,7 @@ such as their current download rate, and the sets of pieces they have.
 module Haze.PeerInfo
     ( PeerHandle(..)
     , PeerInfo
-    , HasPieceInfo(..)
+    , HasPeerInfo(..)
     , addPeer
     , sendWriterToPeer
     , sendWriterToAll
@@ -100,8 +100,8 @@ data PeerInfo = PeerInfo
     }
 
 -- | Represents a class of contexts in which we have access to pieceinfo
-class HasPieceInfo m where
-    getPeerInfo :: m PeerInfo 
+class HasPeerInfo m where
+    getPeerInfo :: m PeerInfo
 
 -- | Make a handle from specific and shared information
 makeHandle :: PeerSpecific -> PeerInfo -> Peer -> PeerHandle
@@ -131,21 +131,21 @@ sendWriterMsg msg specific =
 
 This does nothing if the peer isn't present
 -}
-sendWriterToPeer :: (MonadIO m, HasPieceInfo m) => WriterToPeer -> Peer -> m ()
+sendWriterToPeer :: (MonadIO m, HasPeerInfo m) => WriterToPeer -> Peer -> m ()
 sendWriterToPeer msg peer = do
     info <- getPeerInfo
     maybeInfo <- HM.lookup peer <$> readTVarIO (infoMap info)
     whenJust maybeInfo (sendWriterMsg msg)
 
 -- | Send a writer msg to every peer
-sendWriterToAll :: (MonadIO m, HasPieceInfo m) => WriterToPeer -> m ()
+sendWriterToAll :: (MonadIO m, HasPeerInfo m) => WriterToPeer -> m ()
 sendWriterToAll msg = do
     info <- getPeerInfo
     peerInfos <- HM.elems <$> readTVarIO (infoMap info)
     forM_ peerInfos (sendWriterMsg msg)
 
 -- | Receive a message from a peer to a writer
-recvToWriter :: (MonadIO m, HasPieceInfo m) => m PeerToWriter
+recvToWriter :: (MonadIO m, HasPeerInfo m) => m PeerToWriter
 recvToWriter = do
     info <- getPeerInfo
     atomically $ readTBQueue (infoToWriter info)
