@@ -18,6 +18,7 @@ import           Relude
 
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , newTBQueueIO
+                                                , readTBQueue
                                                 , writeTBQueue
                                                 )
 import           Data.Array                     ( Array )
@@ -61,9 +62,7 @@ each peer has its own communication channels, as well as other things.
 To handle this, we have this struct for specific information
 -}
 data PeerSpecific = PeerSpecific
-    { peerToWriter :: !(TBQueue PeerToWriter) -- ^ msgs to writer
-    -- | A queue to allow the writer to send us messages
-    , peerFromWriter :: !(TBQueue WriterToPeer)
+    { peerFromWriter :: !(TBQueue WriterToPeer) -- ^ a queue from the writer
     -- | A queue to allow the manager to send us messages
     , peerFromManager :: !(TBQueue ManagerToPeer)
     -- | The download rate for this specific peer
@@ -73,7 +72,7 @@ data PeerSpecific = PeerSpecific
 -- | Create a new empty struct of PeerSpecific Data
 makePeerSpecific :: MonadIO m => m PeerSpecific
 makePeerSpecific =
-    PeerSpecific <$> mkQueue <*> mkQueue <*> mkQueue <*> newTVarIO 0
+    PeerSpecific <$> mkQueue <*> mkQueue <*> newTVarIO 0
     where mkQueue = liftIO (newTBQueueIO 256)
 
 {- | This holds general information about the operation of the peers.
@@ -87,6 +86,8 @@ data PeerInfo = PeerInfo
     , infoOurPieces :: !(TVar (Set Int))
     -- | The shared piece buffer
     , infoBuffer :: !(TVar PieceBuffer)
+    -- | The shared message queue to the writer
+    , infoToWriter :: !(TBQueue PeerToWriter)
     -- | A map from a Peer to specific Peer data
     , infoMap :: !(TVar (HM.HashMap Peer PeerSpecific))
     }
@@ -100,7 +101,7 @@ makeHandle :: PeerSpecific -> PeerInfo -> Peer -> PeerHandle
 makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
                                                         infoOurPieces
                                                         infoBuffer
-                                                        peerToWriter
+                                                        infoToWriter
                                                         peerFromWriter
                                                         peerFromManager
                                                         peerDLRate
@@ -129,7 +130,6 @@ sendWriterToPeer msg peer = do
     maybeInfo <- HM.lookup peer <$> readTVarIO (infoMap info)
     whenJust maybeInfo (sendWriterMsg msg)
 
-
 -- | Send a writer msg to every peer
 sendWriterToAll :: (MonadIO m, HasPieceInfo m) => WriterToPeer -> m ()
 sendWriterToAll msg = do
@@ -137,3 +137,8 @@ sendWriterToAll msg = do
     peerInfos <- HM.elems <$> readTVarIO (infoMap info)
     forM_ peerInfos (sendWriterMsg msg)
 
+-- | Receive a message from a peer to a writer
+recvToWriter :: (MonadIO m, HasPieceInfo m) => m PeerToWriter
+recvToWriter = do
+    info <- getPeerInfo
+    atomically $ readTBQueue (infoToWriter info)
