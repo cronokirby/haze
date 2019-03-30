@@ -26,9 +26,6 @@ import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , readTBQueue
                                                 , writeTBQueue
                                                 )
-import           Control.Concurrent.STM.TChan   ( TChan
-                                                , readTChan
-                                                )
 import           Control.Exception.Safe         ( Exception
                                                 , MonadThrow
                                                 , throw
@@ -231,10 +228,10 @@ data PeerMInfo = PeerMInfo
     , peerMBuffer :: !(TVar PieceBuffer)
     -- | The out bound message queue to the piece writer
     , peerMToWriter :: !(TBQueue PeerToWriter)
-    -- | The broadcast channel from the writer
+    -- | The specific channel from the writer
     , peerMFromWriter :: !(TBQueue WriterToPeer)
-    -- | The broadcast channel from the manager
-    , peerMFromManager :: !(TChan ManagerToPeer)
+    -- | The specific channel from the manager
+    , peerMFromManager :: !(TBQueue ManagerToPeer)
     {- | This contains the download rate in bytes / second
 
     This is exposed to other people mainly so that the manager can
@@ -373,7 +370,7 @@ reactToManager PeerIsWorthy = do
 managerLoop :: PeerM ()
 managerLoop = forever $ do
     chan <- asks peerMFromManager
-    msg  <- atomically $ readTChan chan
+    msg  <- atomically $ readTBQueue chan
     reactToManager msg
 
 

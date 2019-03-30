@@ -42,8 +42,8 @@ data PeerHandle = PeerHandle
     , handleToWriter :: !(TBQueue PeerToWriter)
     -- | The specific channel from the writer
     , handleFromWriter :: !(TBQueue WriterToPeer)
-    -- | The broadcast channel from the manager
-    , handleFromManager :: !(TChan ManagerToPeer)
+    -- | The specific channel from the manager
+    , handleFromManager :: !(TBQueue ManagerToPeer)
     -- | The donwload rate for this peer
     , handleDLRate :: !(TVar Double)
     -- | The peer associated with this handle
@@ -57,6 +57,4 @@ data PeerInfo = PeerInfo
     , infoOurPieces :: !(TVar (Set Int))
     -- | The shared piece buffer
     , infoBuffer :: !(TVar PieceBuffer)
-    -- | A broadcast channel for the manager to sned information to all peers
-    , infoFromManager :: !(TChan ManagerToPeer)
     }
