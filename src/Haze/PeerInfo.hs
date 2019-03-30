@@ -11,7 +11,14 @@ We also want to keep track of certain statistics about the peers,
 such as their current download rate, and the sets of pieces they have.
 -}
 module Haze.PeerInfo
-    ()
+    ( PeerHandle(..)
+    , PeerInfo
+    , HasPieceInfo(..)
+    , addPeer
+    , sendWriterToPeer
+    , sendWriterToAll
+    , recvToWriter
+    )
 where
 
 import           Relude
