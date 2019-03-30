@@ -16,8 +16,8 @@ where
 import           Relude
 
 import           Control.Concurrent.STM.TBQueue ( TBQueue )
-import           Control.Concurrent.STM.TChan   ( TChan )
 import           Data.Array                     ( Array )
+import qualified Data.HashMap.Strict as HM
 
 import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , WriterToPeer(..)
@@ -44,17 +44,39 @@ data PeerHandle = PeerHandle
     , handleFromWriter :: !(TBQueue WriterToPeer)
     -- | The specific channel from the manager
     , handleFromManager :: !(TBQueue ManagerToPeer)
-    -- | The donwload rate for this peer
+    -- | The download rate for this peer
     , handleDLRate :: !(TVar Double)
     -- | The peer associated with this handle
     , handlePeer :: !Peer
     }
 
+{- | PeerSpecific holds the information owned by one peer only.
 
+As opposed to general structures like the piece rarity map,
+each peer has its own communication channels, as well as other things.
+To handle this, we have this struct for specific information
+-}
+data PeerSpecific = PeerSpecific
+    { peerToWriter :: !(TBQueue PeerToWriter) -- ^ msgs to writer
+    -- | A queue to allow the writer to send us messages
+    , peerFromWriter :: !(TBQueue WriterToPeer)
+    -- | A queue to allow the manager to send us messages
+    , peerFromManager :: !(TBQueue ManagerToPeer)
+    -- | The download rate for this specific peer
+    , peerDLRate :: !(TVar Double)
+    }
+
+{- | This holds general information about the operation of the peers.
+
+Specifically, it contains a mapping from each Peer to the specific
+information that they need. 
+-}
 data PeerInfo = PeerInfo
     { infoPieces :: !(Array Int (TVar Int)) -- ^ piece index -> count
     -- | The pieces we currently have
     , infoOurPieces :: !(TVar (Set Int))
     -- | The shared piece buffer
     , infoBuffer :: !(TVar PieceBuffer)
+    -- | A map from a Peer to specific Peer data
+    , infoMap :: !(HM.HashMap Peer PeerSpecific)
     }
