@@ -24,6 +24,7 @@ import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , ManagerToPeer(..)
                                                 )
 import           Haze.PieceBuffer               ( PieceBuffer )
+import           Haze.Tracker                   ( Peer )
 
 
 {- | A peer handle contains the information a peer shares with the rest of us.
@@ -49,3 +50,13 @@ data PeerHandle = PeerHandle
     , handlePeer :: !Peer
     }
 
+
+data PeerInfo = PeerInfo
+    { infoPieces :: !(Array Int (TVar Int)) -- ^ piece index -> count
+    -- | The pieces we currently have
+    , infoOurPieces :: !(TVar (Set Int))
+    -- | The shared piece buffer
+    , infoBuffer :: !(TVar PieceBuffer)
+    -- | A broadcast channel for the manager to sned information to all peers
+    , infoFromManager :: !(TChan ManagerToPeer)
+    }
