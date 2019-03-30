@@ -18,6 +18,7 @@ import           Relude
 
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , newTBQueueIO
+                                                , writeTBQueue
                                                 )
 import           Data.Array                     ( Array )
 import qualified Data.HashMap.Strict           as HM
@@ -90,6 +91,10 @@ data PeerInfo = PeerInfo
     , infoMap :: !(TVar (HM.HashMap Peer PeerSpecific))
     }
 
+-- | Represents a class of contexts in which we have access to pieceinfo
+class HasPieceInfo m where
+    getPeerInfo :: m PeerInfo 
+
 -- | Make a handle from specific and shared information
 makeHandle :: PeerSpecific -> PeerInfo -> Peer -> PeerHandle
 makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
@@ -100,6 +105,7 @@ makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
                                                         peerFromManager
                                                         peerDLRate
 
+
 -- | Add a new peer to the information we have
 addPeer :: MonadIO m => Peer -> PeerInfo -> m PeerHandle
 addPeer newPeer info = do
@@ -107,3 +113,15 @@ addPeer newPeer info = do
     newVal <- makePeerSpecific
     atomically $ modifyTVar' mapVar (HM.insert newPeer newVal)
     return (makeHandle newVal info newPeer)
+
+{- | This can be used to send a writer message to a specific peer
+
+This does nothing if the peer isn't present
+-}
+sendWriterToPeer :: (MonadIO m, HasPieceInfo m) => WriterToPeer -> Peer -> m ()
+sendWriterToPeer msg peer = do
+    info <- getPeerInfo
+    maybeInfo <- HM.lookup peer <$> readTVarIO (infoMap info)
+    whenJust maybeInfo $ \peerInfo -> do
+        let q = peerFromWriter peerInfo
+        atomically $ writeTBQueue q msg
