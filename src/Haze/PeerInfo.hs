@@ -114,6 +114,11 @@ addPeer newPeer info = do
     atomically $ modifyTVar' mapVar (HM.insert newPeer newVal)
     return (makeHandle newVal info newPeer)
 
+sendWriterMsg :: MonadIO m => WriterToPeer -> PeerSpecific -> m ()
+sendWriterMsg msg specific =
+    let q = peerFromWriter specific
+    in atomically $ writeTBQueue q msg
+
 {- | This can be used to send a writer message to a specific peer
 
 This does nothing if the peer isn't present
@@ -122,6 +127,13 @@ sendWriterToPeer :: (MonadIO m, HasPieceInfo m) => WriterToPeer -> Peer -> m ()
 sendWriterToPeer msg peer = do
     info <- getPeerInfo
     maybeInfo <- HM.lookup peer <$> readTVarIO (infoMap info)
-    whenJust maybeInfo $ \peerInfo -> do
-        let q = peerFromWriter peerInfo
-        atomically $ writeTBQueue q msg
+    whenJust maybeInfo (sendWriterMsg msg)
+
+
+-- | Send a writer msg to every peer
+sendWriterToAll :: (MonadIO m, HasPieceInfo m) => WriterToPeer -> m ()
+sendWriterToAll msg = do
+    info <- getPeerInfo
+    peerInfos <- HM.elems <$> readTVarIO (infoMap info)
+    forM_ peerInfos (sendWriterMsg msg)
+
