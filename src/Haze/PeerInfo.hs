@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {- |
 Description: Contains functions around keeping information on peers
 
@@ -15,9 +16,11 @@ where
 
 import           Relude
 
-import           Control.Concurrent.STM.TBQueue ( TBQueue )
+import           Control.Concurrent.STM.TBQueue ( TBQueue
+                                                , newTBQueueIO
+                                                )
 import           Data.Array                     ( Array )
-import qualified Data.HashMap.Strict as HM
+import qualified Data.HashMap.Strict           as HM
 
 import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , WriterToPeer(..)
@@ -66,6 +69,12 @@ data PeerSpecific = PeerSpecific
     , peerDLRate :: !(TVar Double)
     }
 
+-- | Create a new empty struct of PeerSpecific Data
+makePeerSpecific :: MonadIO m => m PeerSpecific
+makePeerSpecific =
+    PeerSpecific <$> mkQueue <*> mkQueue <*> mkQueue <*> newTVarIO 0
+    where mkQueue = liftIO (newTBQueueIO 256)
+
 {- | This holds general information about the operation of the peers.
 
 Specifically, it contains a mapping from each Peer to the specific
@@ -78,5 +87,23 @@ data PeerInfo = PeerInfo
     -- | The shared piece buffer
     , infoBuffer :: !(TVar PieceBuffer)
     -- | A map from a Peer to specific Peer data
-    , infoMap :: !(HM.HashMap Peer PeerSpecific)
+    , infoMap :: !(TVar (HM.HashMap Peer PeerSpecific))
     }
+
+-- | Make a handle from specific and shared information
+makeHandle :: PeerSpecific -> PeerInfo -> Peer -> PeerHandle
+makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
+                                                        infoOurPieces
+                                                        infoBuffer
+                                                        peerToWriter
+                                                        peerFromWriter
+                                                        peerFromManager
+                                                        peerDLRate
+
+-- | Add a new peer to the information we have
+addPeer :: MonadIO m => Peer -> PeerInfo -> m PeerHandle
+addPeer newPeer info = do
+    let mapVar = infoMap info
+    newVal <- makePeerSpecific
+    atomically $ modifyTVar' mapVar (HM.insert newPeer newVal)
+    return (makeHandle newVal info newPeer)

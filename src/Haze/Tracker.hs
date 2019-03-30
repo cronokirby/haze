@@ -453,6 +453,9 @@ data Peer = Peer
     }
     deriving (Show)
 
+instance Eq Peer where
+    (Peer idA hostA _) == (Peer idB hostB _) = idA == idB && hostA == hostB
+
 instance Hashable Peer where
     hashWithSalt salt (Peer peerID host _)  = 
         salt `hashWithSalt` peerID `hashWithSalt` host
