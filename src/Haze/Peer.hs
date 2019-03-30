@@ -23,6 +23,7 @@ import           Control.Concurrent.Async       ( async
                                                 , waitAnyCatchCancel
                                                 )
 import           Control.Concurrent.STM.TBQueue ( TBQueue
+                                                , readTBQueue
                                                 , writeTBQueue
                                                 )
 import           Control.Concurrent.STM.TChan   ( TChan
@@ -230,7 +231,7 @@ data PeerMInfo = PeerMInfo
     -- | The out bound message queue to the piece writer
     , peerMToWriter :: !(TBQueue PeerToWriter)
     -- | The broadcast channel from the writer
-    , peerMFromWriter :: !(TChan WriterToPeer)
+    , peerMFromWriter :: !(TBQueue WriterToPeer)
     -- | The broadcast channel from the manager
     , peerMFromManager :: !(TChan ManagerToPeer)
     {- | This contains the download rate in bytes / second
@@ -353,7 +354,7 @@ reactToWriter msg = case msg of
 writerLoop :: PeerM ()
 writerLoop = forever $ do
     chan <- asks peerMFromWriter
-    msg  <- atomically $ readTChan chan
+    msg  <- atomically $ readTBQueue chan
     reactToWriter msg
 
 
