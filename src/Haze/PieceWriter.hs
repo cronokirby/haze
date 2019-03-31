@@ -1,3 +1,4 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {- |
 Description: Contains functions centered around writing pieces to disk
 
@@ -39,6 +40,13 @@ import           System.IO                      ( Handle
                                                 , IOMode(..)
                                                 )
 
+import Haze.Messaging (PeerToWriter(..), WriterToPeer(..))                                            
+import           Haze.PeerInfo                  ( HasPeerInfo(..)
+                                                , PeerInfo
+                                                , recvToWriter
+                                                , sendWriterToPeer
+                                                , sendWriterToAll
+                                                )
 import           Haze.Tracker                   ( FileInfo(..)
                                                 , FileItem(..)
                                                 , SHAPieces(..)
@@ -146,7 +154,7 @@ it how they're arranged into files, as well as the size of each normal piece.
 The function takes an absolute directory to serve as the root for all files.
 -}
 writePieces :: MonadIO m => PieceInfo -> [(Int, ByteString)] -> m ()
-writePieces pieceInfo pieces = case pieceInfo of
+writePieces info pieces = case info of
     SimplePieces filePath piecePaths -> do
         forM_ pieces
             $ \(piece, bytes) -> writeAbsFile (piecePaths ! piece) bytes
@@ -188,3 +196,39 @@ appendAll paths = forM_ paths . appendH
 -- | Remove all files in a list
 removeAll :: MonadIO m => [AbsFile] -> m ()
 removeAll paths = forM_ paths Path.removeFile
+
+
+-- | Represents the data a piece writer needs
+data PieceWriterInfo = PieceWriterInfo
+    { pieceInfo :: !PieceInfo
+    , peerInfo :: !PeerInfo
+    }
+
+-- | A context with access to what a piece writer process needs
+newtype PieceWriterM a = PieceWriterM (ReaderT PieceWriterInfo IO a)
+    deriving (Functor, Applicative, Monad, MonadReader PieceWriterInfo, MonadIO)
+
+instance HasPeerInfo PieceWriterM where
+    getPeerInfo = asks peerInfo
+
+-- | Run a piece writer function given the right context
+runPieceWriterM :: PieceWriterInfo -> PieceWriterM a -> IO a
+runPieceWriterM info (PieceWriterM reader) = runReaderT reader info
+
+-- | Lookup and write the pieces in a pieceBuff
+writePiecesM :: PieceWriterM ()
+writePiecesM = do
+    pieces <- savePieces
+    pieceInfo <- asks pieceInfo
+    writePieces pieceInfo pieces
+  where
+    savePieces :: PieceWriterM [(Int, ByteString)]
+    savePieces = undefined
+
+
+pieceWriterLoop :: PieceWriterM ()
+pieceWriterLoop = forever $ do
+    msg <- recvToWriter 
+    case msg of
+        PieceBufferWritten -> writePiecesM
+        PieceRequest peer info -> undefined
