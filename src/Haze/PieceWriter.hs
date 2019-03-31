@@ -38,18 +38,22 @@ import qualified Path
 import qualified Path.IO                       as Path
 import           System.IO                      ( Handle
                                                 , IOMode(..)
+                                                , SeekMode(..)
+                                                , hSeek
                                                 )
 
 import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , WriterToPeer(..)
-                                                )                                            
+                                                )
 import           Haze.PeerInfo                  ( HasPeerInfo(..)
                                                 , PeerInfo(..)
                                                 , recvToWriter
                                                 , sendWriterToPeer
                                                 , sendWriterToAll
                                                 )
-import           Haze.PieceBuffer               ( HasPieceBuffer(..)
+import           Haze.PieceBuffer               ( BlockIndex(..)
+                                                , BlockInfo(..)
+                                                , HasPieceBuffer(..)
                                                 , saveCompletePiecesM
                                                 )
 import           Haze.Tracker                   ( FileInfo(..)
@@ -188,7 +192,7 @@ writeAbsFile :: MonadIO m => AbsFile -> ByteString -> m ()
 writeAbsFile path = writeFileBS (Path.fromAbsFile path)
 
 -- | Utility function for `withFile` but with an absolute path
-withAbsFile :: MonadIO m => AbsFile -> IOMode -> (Handle -> IO ()) -> m ()
+withAbsFile :: MonadIO m => AbsFile -> IOMode -> (Handle -> IO a) -> m a
 withAbsFile path mode action =
     liftIO $ withFile (Path.fromAbsFile path) mode action
 
@@ -218,10 +222,10 @@ With multiple files, we have the same situation, but with multiple files
 each time. A further complication with multiple files is that the piece
 may be a section of one file, but not yet integrated into a part of another file.
 -}
-newtype PieceMapping = PieceMapping [PieceLocation]
+newtype PieceMapping = PieceMapping (Array Int [PieceLocation])
 
 -- | An integer offset into a file
-type OffSet = Int
+type OffSet = Int64
 
 {- | PieceLocation represents a recipe to get part of a piece from disk.
 
@@ -230,16 +234,31 @@ and the final embedded location.
 The piece is only in one of them at a time, but where it is needs to be
 checked by actually looking if the file for the embedded location is written.
 -}
-data PieceLocation = PieceLocation
-    { completeLocation :: !CompleteLocation
-    , embeddedLocation :: !EmbeddedLocation
-    }
+data PieceLocation = PieceLocation !CompleteLocation !EmbeddedLocation
 
 -- | A place where the piece is stored in its own file
 newtype CompleteLocation = CompleteLocation AbsFile
 
 -- | The piece is lodged inside a larger file
 data EmbeddedLocation = EmbeddedLocation !AbsFile !OffSet !Int
+
+-- | using a pieceMapping, get the nth piece from disk
+getPiece :: MonadIO m => PieceMapping -> Int -> m ByteString
+getPiece (PieceMapping mappings) piece =
+    let mapping = mappings ! piece in foldMapA getLocation mapping
+  where
+    getLocation :: MonadIO m => PieceLocation -> m ByteString
+    getLocation (PieceLocation (CompleteLocation cl) embedded) = do
+        isComplete <- Path.doesFileExist cl
+        if isComplete then readComplete cl else readEmbedded embedded
+    readComplete :: MonadIO m => AbsFile -> m ByteString
+    readComplete = readFileBS . Path.fromAbsFile
+    readEmbedded :: MonadIO m => EmbeddedLocation -> m ByteString
+    readEmbedded (EmbeddedLocation file offset amount) =
+        withAbsFile file ReadMode $ \h -> do
+            hSeek h AbsoluteSeek (fromIntegral offset)
+            BS.hGet h amount
+
 
 
 -- | Represents the data a piece writer needs
@@ -267,12 +286,18 @@ runPieceWriterM info (PieceWriterM reader) = runReaderT reader info
 writePiecesM :: PieceWriterM ()
 writePiecesM = do
     pieces <- saveCompletePiecesM
-    info <- asks pieceStructure
+    info   <- asks pieceStructure
     writePieces info pieces
 
 pieceWriterLoop :: PieceWriterM ()
 pieceWriterLoop = forever $ do
-    msg <- recvToWriter 
+    msg <- recvToWriter
     case msg of
-        PieceBufferWritten -> writePiecesM
-        PieceRequest peer info -> undefined
+        PieceBufferWritten     -> writePiecesM
+        PieceRequest peer info -> do
+            let (BlockInfo index@(BlockIndex piece offset) size) = info
+            mapping <- asks pieceMapping
+            pieceData <- getPiece mapping piece
+            let block = BS.take size $ BS.drop offset pieceData
+            sendWriterToPeer (PieceFulfilled index block) peer
+
