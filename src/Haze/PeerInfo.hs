@@ -12,7 +12,7 @@ such as their current download rate, and the sets of pieces they have.
 -}
 module Haze.PeerInfo
     ( PeerHandle(..)
-    , PeerInfo
+    , PeerInfo(infoBuffer)
     , HasPeerInfo(..)
     , addPeer
     , sendWriterToPeer

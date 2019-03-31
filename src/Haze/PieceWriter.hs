@@ -40,18 +40,24 @@ import           System.IO                      ( Handle
                                                 , IOMode(..)
                                                 )
 
-import Haze.Messaging (PeerToWriter(..), WriterToPeer(..))                                            
+import           Haze.Messaging                 ( PeerToWriter(..)
+                                                , WriterToPeer(..)
+                                                )                                            
 import           Haze.PeerInfo                  ( HasPeerInfo(..)
-                                                , PeerInfo
+                                                , PeerInfo(..)
                                                 , recvToWriter
                                                 , sendWriterToPeer
                                                 , sendWriterToAll
+                                                )
+import           Haze.PieceBuffer               ( HasPieceBuffer(..)
+                                                , saveCompletePiecesM
                                                 )
 import           Haze.Tracker                   ( FileInfo(..)
                                                 , FileItem(..)
                                                 , SHAPieces(..)
                                                 , totalFileLength
                                                 )
+
 
 
 type AbsFile = Path Abs File
@@ -211,6 +217,9 @@ newtype PieceWriterM a = PieceWriterM (ReaderT PieceWriterInfo IO a)
 instance HasPeerInfo PieceWriterM where
     getPeerInfo = asks peerInfo
 
+instance HasPieceBuffer PieceWriterM where
+    getPieceBuffer = asks (infoBuffer . peerInfo)
+
 -- | Run a piece writer function given the right context
 runPieceWriterM :: PieceWriterInfo -> PieceWriterM a -> IO a
 runPieceWriterM info (PieceWriterM reader) = runReaderT reader info
@@ -218,13 +227,9 @@ runPieceWriterM info (PieceWriterM reader) = runReaderT reader info
 -- | Lookup and write the pieces in a pieceBuff
 writePiecesM :: PieceWriterM ()
 writePiecesM = do
-    pieces <- savePieces
-    pieceInfo <- asks pieceInfo
-    writePieces pieceInfo pieces
-  where
-    savePieces :: PieceWriterM [(Int, ByteString)]
-    savePieces = undefined
-
+    pieces <- saveCompletePiecesM
+    info <- asks pieceInfo
+    writePieces info pieces
 
 pieceWriterLoop :: PieceWriterM ()
 pieceWriterLoop = forever $ do
