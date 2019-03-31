@@ -28,7 +28,7 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , saveCompletePieces
                                                 , bufferBytes
                                                 )
-import           Haze.PieceWriter               ( PieceInfo(..)
+import           Haze.PieceWriter               ( FileStructure(..)
                                                 , SplitPiece(..)
                                                 , makePieceInfo
                                                 )
