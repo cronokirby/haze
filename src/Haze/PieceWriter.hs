@@ -9,7 +9,7 @@ the writing, as well as starting up the process are provided.
 -}
 module Haze.PieceWriter
     ( -- Mainly exported for testing
-      PieceInfo(..)
+      FileStructure(..)
     , SplitPiece(..)
     , makePieceInfo
     , writePieces
@@ -67,7 +67,7 @@ type AbsFile = Path Abs File
 This should ideally be generated statically before running the piece writer,
 as this information never changes.
 -}
-data PieceInfo
+data FileStructure
     -- | We have a single file, and an array of pieces to save
     = SimplePieces !AbsFile !(Array Int AbsFile)
     {- | We have multiple files to deal with
@@ -90,14 +90,14 @@ data SplitPiece
     deriving (Eq, Show)
 
 
-{- | Construct a 'PieceInfo' given information about the pieces.
+{- | Construct a 'FileStructure' given information about the pieces.
 
 The 'FileInfo' provides information about how the pieces are organised
 in a file, and the 'SHAPieces' gives us information about how
 each piece is sized. This function also takes a root directory
 into which the files should be unpacked.
 -}
-makePieceInfo :: FileInfo -> SHAPieces -> Path Abs Dir -> PieceInfo
+makePieceInfo :: FileInfo -> SHAPieces -> Path Abs Dir -> FileStructure
 makePieceInfo fileInfo pieces root = case fileInfo of
     SingleFile (FileItem path _ _) ->
         let paths      = makePiecePath root <$> [0 .. maxPiece]
@@ -159,8 +159,8 @@ This function takes information about the pieces, telling
 it how they're arranged into files, as well as the size of each normal piece.
 The function takes an absolute directory to serve as the root for all files.
 -}
-writePieces :: MonadIO m => PieceInfo -> [(Int, ByteString)] -> m ()
-writePieces info pieces = case info of
+writePieces :: MonadIO m => FileStructure -> [(Int, ByteString)] -> m ()
+writePieces structure pieces = case structure of
     SimplePieces filePath piecePaths -> do
         forM_ pieces
             $ \(piece, bytes) -> writeAbsFile (piecePaths ! piece) bytes
@@ -206,7 +206,7 @@ removeAll paths = forM_ paths Path.removeFile
 
 -- | Represents the data a piece writer needs
 data PieceWriterInfo = PieceWriterInfo
-    { pieceInfo :: !PieceInfo
+    { pieceStructure :: !FileStructure
     , peerInfo :: !PeerInfo
     }
 
@@ -228,7 +228,7 @@ runPieceWriterM info (PieceWriterM reader) = runReaderT reader info
 writePiecesM :: PieceWriterM ()
 writePiecesM = do
     pieces <- saveCompletePiecesM
-    info <- asks pieceInfo
+    info <- asks pieceStructure
     writePieces info pieces
 
 pieceWriterLoop :: PieceWriterM ()
