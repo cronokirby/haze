@@ -101,8 +101,13 @@ in a file, and the 'SHAPieces' gives us information about how
 each piece is sized. This function also takes a root directory
 into which the files should be unpacked.
 -}
+<<<<<<< HEAD
 makeFileStructure :: FileInfo -> SHAPieces -> Path Abs Dir -> FileStructure
 makeFileStructure fileInfo pieces root = case fileInfo of
+=======
+makePieceInfo :: FileInfo -> SHAPieces -> Path Abs Dir -> FileStructure
+makePieceInfo fileInfo pieces root = case fileInfo of
+>>>>>>> c34ec4b6487b45b7984849d1ef2de9926dd2acf4
     SingleFile (FileItem path _ _) ->
         let paths      = makePiecePath root <$> [0 .. maxPiece]
             piecePaths = listArray (0, maxPiece) paths
@@ -264,7 +269,10 @@ getPiece (PieceMapping mappings) piece =
 -- | Represents the data a piece writer needs
 data PieceWriterInfo = PieceWriterInfo
     { pieceStructure :: !FileStructure
+<<<<<<< HEAD
     , pieceMapping :: !PieceMapping
+=======
+>>>>>>> c34ec4b6487b45b7984849d1ef2de9926dd2acf4
     , peerInfo :: !PeerInfo
     }
 
@@ -286,7 +294,11 @@ runPieceWriterM info (PieceWriterM reader) = runReaderT reader info
 writePiecesM :: PieceWriterM ()
 writePiecesM = do
     pieces <- saveCompletePiecesM
+<<<<<<< HEAD
     info   <- asks pieceStructure
+=======
+    info <- asks pieceStructure
+>>>>>>> c34ec4b6487b45b7984849d1ef2de9926dd2acf4
     writePieces info pieces
 
 pieceWriterLoop :: PieceWriterM ()
