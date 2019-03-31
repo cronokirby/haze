@@ -30,7 +30,7 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 )
 import           Haze.PieceWriter               ( FileStructure(..)
                                                 , SplitPiece(..)
-                                                , makePieceInfo
+                                                , makeFileStructure
                                                 )
 import           Haze.Tracker                   ( SHAPieces(..)
                                                 , FileInfo(..)
@@ -178,17 +178,17 @@ pieceBufferSpec = do
 
 
 pieceWriterSpec :: SpecWith ()
-pieceWriterSpec = describe "PieceWriter.makePieceInfo" $ do
+pieceWriterSpec = describe "PieceWriter.makeFileStructure" $ do
     let makeFile files = SimplePieces (makeAbsFile "foo.txt")
                                       (makeArr . map makeAbsFile $ files)
     it "works for single files with even division" $ do
-        makeSingleFile "foo.txt" 2 `pieceInfoShouldBe` makeFile ["piece-0.bin"]
+        makeSingleFile "foo.txt" 2 `fsShouldBe` makeFile ["piece-0.bin"]
         makeSingleFile "foo.txt" 4
-            `pieceInfoShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
+            `fsShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
     it "works for single files with uneven division" $ do
-        makeSingleFile "foo.txt" 1 `pieceInfoShouldBe` makeFile ["piece-0.bin"]
+        makeSingleFile "foo.txt" 1 `fsShouldBe` makeFile ["piece-0.bin"]
         makeSingleFile "foo.txt" 3
-            `pieceInfoShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
+            `fsShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
     let makeDeps = map (\(f, fs) -> (makeAbsFile f, map makeAbsFile fs))
     it "works for multiple files with even division" $ do
         let items = uncurry makeFileItem <$> [("foo.txt", 2), ("bar.txt", 2)]
@@ -197,7 +197,7 @@ pieceWriterSpec = describe "PieceWriter.makePieceInfo" $ do
             splits     = makeArr $ makePieces ["piece-0.bin", "piece-1.bin"]
             deps       = makeDeps
                 [("bar.txt", ["piece-1.bin"]), ("foo.txt", ["piece-0.bin"])]
-        file `pieceInfoShouldBe` MultiPieces splits deps
+        file `fsShouldBe` MultiPieces splits deps
     it "works for multiple files with uneven division" $ do
         let items = uncurry makeFileItem <$> [("foo.txt", 3), ("bar.txt", 4)]
             file = MultiFile relRoot items
@@ -214,7 +214,7 @@ pieceWriterSpec = describe "PieceWriter.makePieceInfo" $ do
                 [ ("bar.txt", ["bar.txt.start", "piece-3.bin", "piece-2.bin"])
                 , ("foo.txt", ["foo.txt.end", "piece-0.bin"])
                 ]
-        file `pieceInfoShouldBe` MultiPieces splits deps
+        file `fsShouldBe` MultiPieces splits deps
   where
     makeFileItem stringPath size =
         FileItem (fromJust (Path.parseRelFile stringPath)) size Nothing
@@ -224,8 +224,8 @@ pieceWriterSpec = describe "PieceWriter.makePieceInfo" $ do
     relRoot     = fromJust (Path.parseRelDir "./")
     makeAbsFile = fromJust . Path.parseAbsFile . ("/" ++)
     smallPieces = SHAPieces 2 ""
-    pieceInfoShouldBe info res =
-        makePieceInfo info smallPieces root `shouldBe` res
+    fsShouldBe info res =
+        makeFileStructure info smallPieces root `shouldBe` res
 
 
 propertyTests :: IO ()

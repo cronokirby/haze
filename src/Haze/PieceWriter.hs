@@ -11,7 +11,7 @@ module Haze.PieceWriter
     ( -- Mainly exported for testing
       FileStructure(..)
     , SplitPiece(..)
-    , makePieceInfo
+    , makeFileStructure
     , writePieces
     )
 where
@@ -97,8 +97,8 @@ in a file, and the 'SHAPieces' gives us information about how
 each piece is sized. This function also takes a root directory
 into which the files should be unpacked.
 -}
-makePieceInfo :: FileInfo -> SHAPieces -> Path Abs Dir -> FileStructure
-makePieceInfo fileInfo pieces root = case fileInfo of
+makeFileStructure :: FileInfo -> SHAPieces -> Path Abs Dir -> FileStructure
+makeFileStructure fileInfo pieces root = case fileInfo of
     SingleFile (FileItem path _ _) ->
         let paths      = makePiecePath root <$> [0 .. maxPiece]
             piecePaths = listArray (0, maxPiece) paths
@@ -203,10 +203,49 @@ appendAll paths = forM_ paths . appendH
 removeAll :: MonadIO m => [AbsFile] -> m ()
 removeAll paths = forM_ paths Path.removeFile
 
+{- | PieceMapping allows us to determine where to find a piece on disk.
+
+It contains a list of locations that compose the piece. The locations
+come in the same order as they fill the piece in.
+
+This is similar to FileStructure, except instead of telling us how to save
+a piece to disk, this tells us how to retrieve the disk later on.
+Retrieving is made complicated by the fact that where a piece is located
+changes as we download more of the file. In the case of a single file,
+the piece will be stored in its own file until the entire file is downloaded,
+at which point the piece occupies just a section of a big file.
+With multiple files, we have the same situation, but with multiple files
+each time. A further complication with multiple files is that the piece
+may be a section of one file, but not yet integrated into a part of another file.
+-}
+newtype PieceMapping = PieceMapping [PieceLocation]
+
+-- | An integer offset into a file
+type OffSet = Int
+
+{- | PieceLocation represents a recipe to get part of a piece from disk.
+
+It contains both the initial location, where the piece is alone,
+and the final embedded location.
+The piece is only in one of them at a time, but where it is needs to be
+checked by actually looking if the file for the embedded location is written.
+-}
+data PieceLocation = PieceLocation
+    { completeLocation :: !CompleteLocation
+    , embeddedLocation :: !EmbeddedLocation
+    }
+
+-- | A place where the piece is stored in its own file
+newtype CompleteLocation = CompleteLocation AbsFile
+
+-- | The piece is lodged inside a larger file
+data EmbeddedLocation = EmbeddedLocation !AbsFile !OffSet !Int
+
 
 -- | Represents the data a piece writer needs
 data PieceWriterInfo = PieceWriterInfo
     { pieceStructure :: !FileStructure
+    , pieceMapping :: !PieceMapping
     , peerInfo :: !PeerInfo
     }
 
