@@ -67,6 +67,7 @@ import           Haze.Tracker                   ( FileInfo(..)
 
 
 type AbsFile = Path Abs File
+type AbsDir = Path Abs Dir
 
 {- | Represents information about the structure of pieces we have.
 
@@ -103,7 +104,7 @@ in a file, and the 'SHAPieces' gives us information about how
 each piece is sized. This function also takes a root directory
 into which the files should be unpacked.
 -}
-makeFileStructure :: FileInfo -> SHAPieces -> Path Abs Dir -> FileStructure
+makeFileStructure :: FileInfo -> SHAPieces -> AbsDir -> FileStructure
 makeFileStructure fileInfo pieces root = case fileInfo of
     SingleFile (FileItem path _ _) ->
         let paths      = makePiecePath root <$> [0 .. maxPiece]
@@ -144,7 +145,7 @@ makeFileStructure fileInfo pieces root = case fileInfo of
     pieceSize = let (SHAPieces size _) = pieces in size
     maxPiece :: Int
     maxPiece = fromIntegral $ (totalFileLength fileInfo - 1) `div` pieceSize
-    makePiecePath :: Path Abs Dir -> Int -> AbsFile
+    makePiecePath :: AbsDir -> Int -> AbsFile
     makePiecePath theRoot piece =
         let pieceName = "piece-" ++ show piece ++ ".bin"
         in  theRoot </> fromJust (Path.parseRelFile pieceName)
@@ -227,54 +228,56 @@ may be a section of one file, but not yet integrated into a part of another file
 newtype PieceMapping = PieceMapping (Array Int [PieceLocation])
 
 -- | Create a PieceMapping given the structure of the files
-mappingFromStructure :: FileInfo -> SHAPieces -> Path Abs Dir -> FileStructure -> PieceMapping
+mappingFromStructure
+    :: FileInfo -> SHAPieces -> AbsDir -> FileStructure -> PieceMapping
 mappingFromStructure fileInfo (SHAPieces pieceSize _) root structure =
     case structure of
         SimplePieces bigFile pieceFiles ->
-            let
-                lengths = map fromIntegral pieceLengths
-                embeds =
-                    zipWith3 EmbeddedLocation (repeat bigFile) pieceOffsets lengths
-                completes = CompleteLocation <$> elems pieceFiles
-                locations = pure <$> zipWith PieceLocation completes embeds
-            in
-                PieceMapping (listArray (bounds pieceFiles) locations)
+            let lengths    = map fromIntegral pieceLengths
+                makeEmbeds = zipWith3 EmbeddedLocation
+                embeds     = makeEmbeds (repeat bigFile) pieceOffsets lengths
+                completes  = CompleteLocation <$> elems pieceFiles
+                locations  = pure <$> zipWith PieceLocation completes embeds
+            in  PieceMapping (listArray (bounds pieceFiles) locations)
         MultiPieces splits _ ->
             let (MultiFile relRoot items) = fileInfo
-                absRoot = root </> relRoot
-                makeEmbedded = findEmbedded absRoot items
-                splitPieces = elems splits
-                completes = map splitToComplete splitPieces
+                absRoot                   = root </> relRoot
+                makeEmbedded              = findEmbedded absRoot items
+                splitPieces               = elems splits
+                completes                 = map splitToComplete splitPieces
                 embeds = zipWith makeEmbedded pieceOffsets pieceLengths
-                bnds = (0, length pieceLengths)
-            in  PieceMapping . listArray bnds $
-                    zipWith (zipWith PieceLocation) completes embeds
+                bnds                      = (0, length pieceLengths)
+                makeLocations             = zipWith PieceLocation
+                locations = zipWith makeLocations completes embeds
+            in  PieceMapping (listArray bnds locations)
   where
     totalSize :: Int64
     totalSize = totalFileLength fileInfo
     pieceOffsets :: [Int64]
-    pieceOffsets = [0,pieceSize..]
+    pieceOffsets = [0, pieceSize ..]
     pieceLengths :: [Int64]
     pieceLengths =
         let normalPieceCount = fromIntegral $ totalSize `div` pieceSize
             leftoverLength = totalSize `mod` pieceSize
             leftOver = if leftoverLength == 0 then [] else [leftoverLength]
-        in replicate normalPieceCount pieceSize ++ leftOver
+        in  replicate normalPieceCount pieceSize ++ leftOver
     pSize :: Int
     pSize = fromIntegral pieceSize
     leftoverSize :: Int
     leftoverSize = fromIntegral $ totalSize `mod` pieceSize
-    findEmbedded :: Path Abs Dir -> [FileItem] -> OffSet -> Int64 -> [EmbeddedLocation]
-    findEmbedded root files@(FileItem path size _:rest) offset ln
-        | offset < size && offset + ln <= size =
-            [EmbeddedLocation (root </> path) offset (fromIntegral ln)]
-        | offset < size = 
-            let endLength = size - offset
-                embed = EmbeddedLocation (root </> path) offset (fromIntegral endLength)
-            in embed : findEmbedded root rest size (ln - endLength)
-        | otherwise = findEmbedded root rest offset ln
+    findEmbedded :: AbsDir -> [FileItem] -> Int64 -> Int64 -> [EmbeddedLocation]
+    findEmbedded root files@(FileItem path size _ : rest) offset ln
+        | offset < size && offset + ln <= size
+        = [EmbeddedLocation (root </> path) offset (fromIntegral ln)]
+        | offset < size
+        = let endLength  = size - offset
+              endLengthI = fromIntegral endLength
+              embed      = EmbeddedLocation (root </> path) offset endLengthI
+          in  embed : findEmbedded root rest size (ln - endLength)
+        | otherwise
+        = findEmbedded root rest offset ln
     splitToComplete :: SplitPiece -> [CompleteLocation]
-    splitToComplete (NormalPiece file) = [CompleteLocation file]
+    splitToComplete (NormalPiece file     ) = [CompleteLocation file]
     splitToComplete (LeftOverPiece _ f1 f2) = CompleteLocation <$> [f1, f2]
 
 
