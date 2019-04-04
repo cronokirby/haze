@@ -20,12 +20,14 @@ import           Relude
 
 import           Data.Array                     ( Array
                                                 , (!)
+                                                , bounds
                                                 , elems
                                                 , listArray
                                                 )
 import qualified Data.ByteString               as BS
 -- We import lazy bytestring for implementing efficient file ops
 import qualified Data.ByteString.Lazy          as LBS
+import           Data.List                      ( zipWith3 )
 import           Data.Maybe                     ( fromJust )
 import           Path                           ( Path
                                                 , Abs
@@ -224,6 +226,30 @@ may be a section of one file, but not yet integrated into a part of another file
 -}
 newtype PieceMapping = PieceMapping (Array Int [PieceLocation])
 
+-- | Create a PieceMapping given the structure of the files
+mappingFromStructure :: FileInfo -> SHAPieces -> FileStructure -> PieceMapping
+mappingFromStructure fileInfo (SHAPieces pieceSize _) structure =
+    case structure of
+        SimplePieces bigFile pieceFiles ->
+            let
+                bnds    = bounds pieceFiles
+                offsets = [0, pieceSize ..]
+                lengths = replicate (snd bnds) pSize ++ [leftoverSize]
+                embeds =
+                    zipWith3 EmbeddedLocation (elems pieceFiles) offsets lengths
+                completes = CompleteLocation <$> elems pieceFiles
+                locations = pure <$> zipWith PieceLocation completes embeds
+            in
+                PieceMapping (listArray bnds locations)
+  where
+    totalSize :: Int64
+    totalSize = totalFileLength fileInfo
+    pSize :: Int
+    pSize = fromIntegral pieceSize
+    leftoverSize :: Int
+    leftoverSize = fromIntegral $ totalSize `mod` pieceSize
+
+
 -- | An integer offset into a file
 type OffSet = Int64
 
@@ -296,7 +322,7 @@ pieceWriterLoop = forever $ do
         PieceBufferWritten     -> writePiecesM
         PieceRequest peer info -> do
             let (BlockInfo index@(BlockIndex piece offset) size) = info
-            mapping <- asks pieceMapping
+            mapping   <- asks pieceMapping
             pieceData <- getPiece mapping piece
             let block = BS.take size $ BS.drop offset pieceData
             sendWriterToPeer (PieceFulfilled index block) peer
