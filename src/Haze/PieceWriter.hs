@@ -234,7 +234,7 @@ mappingFromStructure fileInfo (SHAPieces pieceSize _) root structure =
             let
                 lengths = map fromIntegral pieceLengths
                 embeds =
-                    zipWith3 EmbeddedLocation (elems pieceFiles) pieceOffsets lengths
+                    zipWith3 EmbeddedLocation (repeat bigFile) pieceOffsets lengths
                 completes = CompleteLocation <$> elems pieceFiles
                 locations = pure <$> zipWith PieceLocation completes embeds
             in
@@ -247,7 +247,8 @@ mappingFromStructure fileInfo (SHAPieces pieceSize _) root structure =
                 completes = map splitToComplete splitPieces
                 embeds = zipWith makeEmbedded pieceOffsets pieceLengths
                 bnds = (0, length pieceLengths)
-            in  PieceMapping . listArray bnds $ zipWith (zipWith PieceLocation) completes embeds
+            in  PieceMapping . listArray bnds $
+                    zipWith (zipWith PieceLocation) completes embeds
   where
     totalSize :: Int64
     totalSize = totalFileLength fileInfo
