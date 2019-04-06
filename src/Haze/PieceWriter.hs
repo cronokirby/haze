@@ -13,6 +13,11 @@ module Haze.PieceWriter
     , SplitPiece(..)
     , makeFileStructure
     , writePieces
+    , PieceMapping(..)
+    , PieceLocation(..)
+    , CompleteLocation(..)
+    , EmbeddedLocation(..)
+    , makeMapping
     )
 where
 
@@ -20,14 +25,12 @@ import           Relude
 
 import           Data.Array                     ( Array
                                                 , (!)
-                                                , bounds
                                                 , elems
                                                 , listArray
                                                 )
 import qualified Data.ByteString               as BS
 -- We import lazy bytestring for implementing efficient file ops
 import qualified Data.ByteString.Lazy          as LBS
-import           Data.List                      ( zipWith3 )
 import           Data.Maybe                     ( fromJust )
 import           Path                           ( Path
                                                 , Abs
@@ -68,6 +71,18 @@ import           Haze.Tracker                   ( FileInfo(..)
 
 type AbsFile = Path Abs File
 type AbsDir = Path Abs Dir
+
+makePiecePath :: AbsDir -> Int -> AbsFile
+makePiecePath theRoot piece =
+    let pieceName = "piece-" ++ show piece ++ ".bin"
+    in  theRoot </> fromJust (Path.parseRelFile pieceName)
+
+makeStartPiece :: AbsFile -> AbsFile
+makeStartPiece file = fromJust (file <.> "start")
+
+makeEndPiece :: AbsFile -> AbsFile
+makeEndPiece file = fromJust (file <.> "end")
+
 
 {- | Represents information about the structure of pieces we have.
 
@@ -145,14 +160,6 @@ makeFileStructure fileInfo pieces root = case fileInfo of
     pieceSize = let (SHAPieces size _) = pieces in size
     maxPiece :: Int
     maxPiece = fromIntegral $ (totalFileLength fileInfo - 1) `div` pieceSize
-    makePiecePath :: AbsDir -> Int -> AbsFile
-    makePiecePath theRoot piece =
-        let pieceName = "piece-" ++ show piece ++ ".bin"
-        in  theRoot </> fromJust (Path.parseRelFile pieceName)
-    makeStartPiece :: AbsFile -> AbsFile
-    makeStartPiece file = fromJust (file <.> "start")
-    makeEndPiece :: AbsFile -> AbsFile
-    makeEndPiece file = fromJust (file <.> "end")
     tryCons :: Maybe a -> [a] -> [a]
     tryCons = maybe id (:)
     makeLeftOverFunc :: Int64 -> AbsFile -> (AbsFile -> SplitPiece, Int64)
@@ -226,30 +233,19 @@ each time. A further complication with multiple files is that the piece
 may be a section of one file, but not yet integrated into a part of another file.
 -}
 newtype PieceMapping = PieceMapping (Array Int [PieceLocation])
+    deriving (Eq, Show)
 
 -- | Create a PieceMapping given the structure of the files
-mappingFromStructure
-    :: FileInfo -> SHAPieces -> AbsDir -> FileStructure -> PieceMapping
-mappingFromStructure fileInfo (SHAPieces pieceSize _) root structure =
-    case structure of
-        SimplePieces bigFile pieceFiles ->
-            let lengths    = map fromIntegral pieceLengths
-                makeEmbeds = zipWith3 EmbeddedLocation
-                embeds     = makeEmbeds (repeat bigFile) pieceOffsets lengths
-                completes  = CompleteLocation <$> elems pieceFiles
-                locations  = pure <$> zipWith PieceLocation completes embeds
-            in  PieceMapping (listArray (bounds pieceFiles) locations)
-        MultiPieces splits _ ->
-            let (MultiFile relRoot items) = fileInfo
-                absRoot                   = root </> relRoot
-                makeEmbedded              = findEmbedded absRoot items
-                splitPieces               = elems splits
-                completes                 = map splitToComplete splitPieces
-                embeds = zipWith makeEmbedded pieceOffsets pieceLengths
-                bnds                      = (0, length pieceLengths)
-                makeLocations             = zipWith PieceLocation
-                locations = zipWith makeLocations completes embeds
-            in  PieceMapping (listArray bnds locations)
+makeMapping :: FileInfo -> SHAPieces -> AbsDir -> PieceMapping
+makeMapping fileInfo (SHAPieces pieceSize _) root =
+    let (root', items) = case fileInfo of
+            SingleFile item      -> (root, [item])
+            MultiFile relRoot is -> (root </> relRoot, is)
+        makeEmbedded = findEmbedded root' items
+        makeLocation = fillLocation root'
+        embeds       = zipWith makeEmbedded pieceOffsets pieceLengths
+        locations    = zipWith makeLocation [0 ..] embeds
+    in  PieceMapping (listArray (0, length locations - 1) locations)
   where
     totalSize :: Int64
     totalSize = totalFileLength fileInfo
@@ -261,9 +257,6 @@ mappingFromStructure fileInfo (SHAPieces pieceSize _) root structure =
             leftoverLength = totalSize `mod` pieceSize
             leftOver = if leftoverLength == 0 then [] else [leftoverLength]
         in  replicate normalPieceCount pieceSize ++ leftOver
-    splitToComplete :: SplitPiece -> [CompleteLocation]
-    splitToComplete (NormalPiece file     ) = [CompleteLocation file]
-    splitToComplete (LeftOverPiece _ f1 f2) = CompleteLocation <$> [f1, f2]
 
 
 -- | An integer offset into a file
@@ -276,13 +269,16 @@ and the final embedded location.
 The piece is only in one of them at a time, but where it is needs to be
 checked by actually looking if the file for the embedded location is written.
 -}
-data PieceLocation = PieceLocation !CompleteLocation !EmbeddedLocation
+data PieceLocation = PieceLocation !EmbeddedLocation !CompleteLocation
+    deriving (Eq, Show)
 
 -- | A place where the piece is stored in its own file
 newtype CompleteLocation = CompleteLocation AbsFile
+    deriving (Eq, Show)
 
 -- | The piece is lodged inside a larger file
 data EmbeddedLocation = EmbeddedLocation !AbsFile !Offset !Int
+    deriving (Eq, Show)
 
 findEmbedded :: AbsDir -> [FileItem] -> Offset -> Int64 -> [EmbeddedLocation]
 findEmbedded _ [] _ _ = []
@@ -297,6 +293,20 @@ findEmbedded dir (FileItem path size _ : rest) offset ln
     | otherwise
     = findEmbedded dir rest offset ln
 
+fillLocation :: AbsDir -> Int -> [EmbeddedLocation] -> [PieceLocation]
+fillLocation root piece embeds =
+    let completes = makeCompletes embeds
+    in  zipWith PieceLocation embeds completes
+  where
+    makeCompletes :: [EmbeddedLocation] -> [CompleteLocation]
+    makeCompletes []  = []
+    makeCompletes [_] = [CompleteLocation (makePiecePath root piece)]
+    makeCompletes (EmbeddedLocation file _ _ : rest) =
+        CompleteLocation (makeEndPiece file) : map makeStarts rest
+    makeStarts :: EmbeddedLocation -> CompleteLocation
+    makeStarts (EmbeddedLocation file _ _) =
+        CompleteLocation (makeStartPiece file)
+
 
 -- | using a pieceMapping, get the nth piece from disk
 getPiece :: MonadIO m => PieceMapping -> Int -> m ByteString
@@ -304,7 +314,7 @@ getPiece (PieceMapping mappings) piece =
     let mapping = mappings ! piece in foldMapA getLocation mapping
   where
     getLocation :: MonadIO m => PieceLocation -> m ByteString
-    getLocation (PieceLocation (CompleteLocation cl) embedded) = do
+    getLocation (PieceLocation embedded (CompleteLocation cl)) = do
         isComplete <- Path.doesFileExist cl
         if isComplete then readComplete cl else readEmbedded embedded
     readComplete :: MonadIO m => AbsFile -> m ByteString
