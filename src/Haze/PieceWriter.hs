@@ -31,6 +31,7 @@ import           Data.Array                     ( Array
 import qualified Data.ByteString               as BS
 -- We import lazy bytestring for implementing efficient file ops
 import qualified Data.ByteString.Lazy          as LBS
+import           Data.List                      ( nub )
 import           Data.Maybe                     ( fromJust )
 import           Path                           ( Path
                                                 , Abs
@@ -89,82 +90,46 @@ makeEndPiece file = fromJust (file <.> "end")
 This should ideally be generated statically before running the piece writer,
 as this information never changes.
 -}
-data FileStructure
-    -- | We have a single file, and an array of pieces to save
-    = SimplePieces !AbsFile !(Array Int AbsFile)
-    {- | We have multiple files to deal with
-
-    The first argument is an array mapping each piece index to how
-    we the piece should be split across multiple files. The
-    second argument is a list of files and the corresponding
-    files they depend on. Whenever all of the corresponding files
-    exist, that file is complete.
-    -}
-    | MultiPieces !(Array Int SplitPiece) ![(AbsFile, [AbsFile])]
+data FileStructure = FileStructure !(Array Int SplitPiece) ![(AbsFile, [AbsFile])]
     deriving (Eq, Show)
 
 -- | Represents a piece we have to save potentially over 2 files.
 data SplitPiece
     -- | A piece we can save to a piece file
     = NormalPiece !AbsFile
-    -- | A piece that needs to save N bytes in one file, and the rest in the other
-    | LeftOverPiece !Int !AbsFile !AbsFile
+    -- | A piece that needs to save variable numbers of bytes in multiple files
+    | SplitPieces ![(Int, AbsFile)]
     deriving (Eq, Show)
 
 
-{- | Construct a 'FileStructure' given information about the pieces.
+{- | Construct a 'FileStructure' given information about the pieceMapping
 
-The 'FileInfo' provides information about how the pieces are organised
-in a file, and the 'SHAPieces' gives us information about how
-each piece is sized. This function also takes a root directory
-into which the files should be unpacked.
+Knowing how each piece can be retrieved from disk is enough to
+figure out how to save them to disk.
 -}
-makeFileStructure :: FileInfo -> SHAPieces -> AbsDir -> FileStructure
-makeFileStructure fileInfo pieces root = case fileInfo of
-    SingleFile (FileItem path _ _) ->
-        let paths      = makePiecePath root <$> [0 .. maxPiece]
-            piecePaths = listArray (0, maxPiece) paths
-        in  SimplePieces (root </> path) piecePaths
-    MultiFile relRoot items ->
-        let
-            absRoot = root </> relRoot
-            go (i, makeLO, splits, files) (FileItem path size _) =
-                let
-                    absPath    = absRoot </> path
-                    startPiece = makeLO $> makeStartPiece absPath
-                    midSize    = maybe size ((size -) . snd) makeLO
-                    leftOver   = liftA2 (\(f, _) p -> f p) makeLO startPiece
-                    (d, m)     = midSize `divMod` pieceSize
-                    lastFit    = fromIntegral d + i - 1
-                    nextIndex  = lastFit + if m == 0 then 1 else 2
-                    finalEnd =
-                        guard (m /= 0 && nextIndex > maxPiece)
-                            $> makePiecePath absRoot maxPiece
-                    bookEnd    = guard (m /= 0) $> makeEndPiece absPath
-                    endPiece   = finalEnd <|> bookEnd
-                    makeLO'    = makeLeftOverFunc m <$> endPiece
-                    midPieces  = makePiecePath absRoot <$> [i .. lastFit]
-                    midSplits  = leftOver `tryCons` map NormalPiece midPieces
-                    nextSplits = case finalEnd of
-                        Just end -> midSplits ++ [NormalPiece end]
-                        Nothing  -> midSplits
-                    deps   = startPiece `tryCons` (endPiece `tryCons` midPieces)
-                    files' = (absRoot </> path, deps) : files
-                in
-                    (nextIndex, makeLO', splits ++ nextSplits, files')
-            (_, _, theSplits, theFiles) = foldl' go (0, Nothing, [], []) items
-        in
-            MultiPieces (listArray (0, maxPiece) theSplits) theFiles
+makeFileStructure :: PieceMapping -> FileStructure
+makeFileStructure (PieceMapping m) =
+    let locations = join (elems m)
+        files     = nub $ map extractEmbedded locations
+        deps      = map (\f -> (f, mapMaybe (getDep f) locations)) files
+        splits = locationsToSplit <$> m
+    in  FileStructure splits deps
   where
-    pieceSize :: Int64
-    pieceSize = let (SHAPieces size _) = pieces in size
-    maxPiece :: Int
-    maxPiece = fromIntegral $ (totalFileLength fileInfo - 1) `div` pieceSize
-    tryCons :: Maybe a -> [a] -> [a]
-    tryCons = maybe id (:)
-    makeLeftOverFunc :: Int64 -> AbsFile -> (AbsFile -> SplitPiece, Int64)
-    makeLeftOverFunc m path =
-        (LeftOverPiece (fromIntegral m) path, pieceSize - m)
+    extractEmbedded :: PieceLocation -> AbsFile
+    extractEmbedded (PieceLocation (EmbeddedLocation e _ _) _) = e
+    getDep :: AbsFile -> PieceLocation -> Maybe AbsFile
+    getDep file (PieceLocation (EmbeddedLocation e _ _) (CompleteLocation f))
+        | file == e = Just f
+        | otherwise = Nothing
+    locationsToSplit :: [PieceLocation] -> SplitPiece
+    locationsToSplit [] = error "No locations to split"
+    locationsToSplit [PieceLocation _ (CompleteLocation f)] = NormalPiece f
+    locationsToSplit plenty =
+        let
+            getSplit (PieceLocation (EmbeddedLocation _ _ l) (CompleteLocation f))
+                = (l, f)
+        in  SplitPieces (map getSplit plenty)
+
 
 
 {- | Write a list of complete indices and pieces to a file.
@@ -174,19 +139,15 @@ it how they're arranged into files, as well as the size of each normal piece.
 The function takes an absolute directory to serve as the root for all files.
 -}
 writePieces :: MonadIO m => FileStructure -> [(Int, ByteString)] -> m ()
-writePieces structure pieces = case structure of
-    SimplePieces filePath piecePaths -> do
-        forM_ pieces
-            $ \(piece, bytes) -> writeAbsFile (piecePaths ! piece) bytes
-        appendWhenAllExist filePath (elems piecePaths)
-    MultiPieces splitPieces fileDependencies -> do
-        forM_ pieces $ \(piece, bytes) -> case splitPieces ! piece of
-            NormalPiece filePath ->
-                writeFileBS (Path.fromAbsFile filePath) bytes
-            LeftOverPiece startSize startPath endPath ->
-                let (start, end) = BS.splitAt startSize bytes
-                in  writeAbsFile startPath start *> writeAbsFile endPath end
-        forM_ fileDependencies (uncurry appendWhenAllExist)
+writePieces (FileStructure splitPieces deps) pieces = do
+    forM_ pieces $ \(piece, bytes) -> case splitPieces ! piece of
+        NormalPiece filePath -> writeFileBS (Path.fromAbsFile filePath) bytes
+        SplitPieces splits ->
+            let go (bs, action) (size, file) =
+                    let (start, end) = BS.splitAt size bs
+                    in  (end, action *> writeAbsFile file start)
+            in  snd $ foldl' go (bytes, pure ()) splits
+    forM_ deps (uncurry appendWhenAllExist)
   where
     -- This will also remove the appended files
     appendWhenAllExist :: MonadIO m => AbsFile -> [AbsFile] -> m ()
