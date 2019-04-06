@@ -261,29 +261,13 @@ mappingFromStructure fileInfo (SHAPieces pieceSize _) root structure =
             leftoverLength = totalSize `mod` pieceSize
             leftOver = if leftoverLength == 0 then [] else [leftoverLength]
         in  replicate normalPieceCount pieceSize ++ leftOver
-    pSize :: Int
-    pSize = fromIntegral pieceSize
-    leftoverSize :: Int
-    leftoverSize = fromIntegral $ totalSize `mod` pieceSize
-    findEmbedded :: AbsDir -> [FileItem] -> Int64 -> Int64 -> [EmbeddedLocation]
-    findEmbedded root files@(FileItem path size _ : rest) offset ln
-        | offset < size && offset + ln <= size
-        = [EmbeddedLocation (root </> path) offset (fromIntegral ln)]
-        | offset < size
-        = let endLength  = size - offset
-              endLengthI = fromIntegral endLength
-              embed      = EmbeddedLocation (root </> path) offset endLengthI
-          in  embed : findEmbedded root rest size (ln - endLength)
-        | otherwise
-        = findEmbedded root rest offset ln
     splitToComplete :: SplitPiece -> [CompleteLocation]
     splitToComplete (NormalPiece file     ) = [CompleteLocation file]
     splitToComplete (LeftOverPiece _ f1 f2) = CompleteLocation <$> [f1, f2]
 
 
-
 -- | An integer offset into a file
-type OffSet = Int64
+type Offset = Int64
 
 {- | PieceLocation represents a recipe to get part of a piece from disk.
 
@@ -298,7 +282,21 @@ data PieceLocation = PieceLocation !CompleteLocation !EmbeddedLocation
 newtype CompleteLocation = CompleteLocation AbsFile
 
 -- | The piece is lodged inside a larger file
-data EmbeddedLocation = EmbeddedLocation !AbsFile !OffSet !Int
+data EmbeddedLocation = EmbeddedLocation !AbsFile !Offset !Int
+
+findEmbedded :: AbsDir -> [FileItem] -> Offset -> Int64 -> [EmbeddedLocation]
+findEmbedded _ [] _ _ = []
+findEmbedded dir (FileItem path size _ : rest) offset ln
+    | offset < size && offset + ln <= size
+    = [EmbeddedLocation (dir </> path) offset (fromIntegral ln)]
+    | offset < size
+    = let endLength  = size - offset
+          endLengthI = fromIntegral endLength
+          embed      = EmbeddedLocation (dir </> path) offset endLengthI
+      in  embed : findEmbedded dir rest size (ln - endLength)
+    | otherwise
+    = findEmbedded dir rest offset ln
+
 
 -- | using a pieceMapping, get the nth piece from disk
 getPiece :: MonadIO m => PieceMapping -> Int -> m ByteString

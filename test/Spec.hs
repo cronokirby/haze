@@ -196,7 +196,7 @@ pieceWriterSpec = describe "PieceWriter.makeFileStructure" $ do
             makePieces = map (NormalPiece . makeAbsFile)
             splits     = makeArr $ makePieces ["piece-0.bin", "piece-1.bin"]
             deps       = makeDeps
-                [("bar.txt", ["piece-1.bin"]), ("foo.txt", ["piece-0.bin"])]
+                [("foo.txt", ["piece-0.bin"]), ("bar.txt", ["piece-1.bin"])]
         file `fsShouldBe` MultiPieces splits deps
     it "works for multiple files with uneven division" $ do
         let items = uncurry makeFileItem <$> [("foo.txt", 3), ("bar.txt", 4)]
@@ -211,8 +211,8 @@ pieceWriterSpec = describe "PieceWriter.makeFileStructure" $ do
                 , makeNormal "piece-3.bin"
                 ]
             deps = makeDeps
-                [ ("bar.txt", ["bar.txt.start", "piece-3.bin", "piece-2.bin"])
-                , ("foo.txt", ["foo.txt.end", "piece-0.bin"])
+                [ ("foo.txt", ["piece-0.bin", "foo.txt.end"])
+                , ("bar.txt", ["bar.txt.start", "piece-2.bin", "piece-3.bin"])
                 ]
         file `fsShouldBe` MultiPieces splits deps
   where
