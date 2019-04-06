@@ -289,9 +289,9 @@ findEmbedded dir (FileItem path size _ : rest) offset ln
     = let endLength  = size - offset
           endLengthI = fromIntegral endLength
           embed      = EmbeddedLocation (dir </> path) offset endLengthI
-      in  embed : findEmbedded dir rest size (ln - endLength)
+      in  embed : findEmbedded dir rest 0 (ln - endLength)
     | otherwise
-    = findEmbedded dir rest offset ln
+    = findEmbedded dir rest (offset - size) ln
 
 fillLocation :: AbsDir -> Int -> [EmbeddedLocation] -> [PieceLocation]
 fillLocation root piece embeds =

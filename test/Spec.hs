@@ -31,6 +31,11 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
 import           Haze.PieceWriter               ( FileStructure(..)
                                                 , SplitPiece(..)
                                                 , makeFileStructure
+                                                , PieceMapping(..)
+                                                , PieceLocation(..)
+                                                , CompleteLocation(..)
+                                                , EmbeddedLocation(..)
+                                                , makeMapping
                                                 )
 import           Haze.Tracker                   ( SHAPieces(..)
                                                 , FileInfo(..)
@@ -178,7 +183,12 @@ pieceBufferSpec = do
 
 
 pieceWriterSpec :: SpecWith ()
-pieceWriterSpec = describe "PieceWriter.makeFileStructure" $ do
+pieceWriterSpec = do
+    --makeFileStructureSpec
+    makeMappingSpec
+
+makeFileStructureSpec :: SpecWith ()
+makeFileStructureSpec = describe "PieceWriter.makeFileStructure" $ do
     let makeFile files = SimplePieces (makeAbsFile "foo.txt")
                                       (makeArr . map makeAbsFile $ files)
     it "works for single files with even division" $ do
@@ -227,12 +237,77 @@ pieceWriterSpec = describe "PieceWriter.makeFileStructure" $ do
     fsShouldBe info res =
         makeFileStructure info smallPieces root `shouldBe` res
 
+makeMappingSpec :: SpecWith ()
+makeMappingSpec = describe "PieceWriter.makeMapping" $ do
+    it "works for single files" $ do
+        let m1 = [[("foo.txt", 0, 2, "piece-0.bin")]]
+        singleFile "foo.txt" 2 `mappingShouldBe` m1
+        let
+            m2 =
+                [ [("foo.txt", 0, 2, "piece-0.bin")]
+                , [("foo.txt", 2, 1, "piece-1.bin")]
+                ]
+        singleFile "foo.txt" 3 `mappingShouldBe` m2
+    it "works for multiple files with even division" $ do
+        let m1 =
+                [ [("/rel/foo.txt", 0, 2, "/rel/piece-0.bin")]
+                , [("/rel/bar.txt", 0, 2, "/rel/piece-1.bin")]
+                ]
+        multiFiles [("foo.txt", 2), ("bar.txt", 2)] `mappingShouldBe` m1
+        let m2 = 
+                [ [("/rel/foo.txt", 0, 2, "/rel/piece-0.bin")]
+                , [("/rel/bar.txt", 0, 2, "/rel/piece-1.bin")]
+                , [("/rel/bar.txt", 2, 1, "/rel/piece-2.bin")]
+                ]
+        multiFiles [("foo.txt", 2), ("bar.txt", 3)] `mappingShouldBe` m2
+    it "works for multiple files with uneven division" $ do
+        let m1 =
+               [ [("/rel/foo.txt", 0, 2, "/rel/piece-0.bin")]
+               , [ ("/rel/foo.txt", 2, 1, "/rel/foo.txt.end")
+                 , ("/rel/bar.txt", 0, 1, "/rel/bar.txt.start")
+                 ]
+               , [("/rel/bar.txt", 1, 1, "/rel/piece-2.bin")]
+               ]
+        multiFiles [("foo.txt", 3), ("bar.txt", 2)] `mappingShouldBe` m1
+    it "works for very small files" $ do
+        let f1 = 
+               [("foo.txt", 3)
+               , ("bar.txt", 1)
+               , ("baz.txt", 2)
+               ]
+            m1 =
+               [ [("/rel/foo.txt", 0, 2, "/rel/piece-0.bin")]
+               , [("/rel/foo.txt", 2, 1, "/rel/foo.txt.end")
+                 , ("/rel/bar.txt", 0, 1, "/rel/bar.txt.start")
+                 ]
+               , [("/rel/baz.txt", 0, 2, "/rel/piece-2.bin")]
+               ]
+        multiFiles f1 `mappingShouldBe` m1
+  where
+    makeAbsFile = fromJust . Path.parseAbsFile . ("/" ++)
+    root        = fromJust (Path.parseAbsDir "/")
+    relRoot     = fromJust (Path.parseRelDir "./rel")
+    makeFileItem path size =
+        FileItem (fromJust (Path.parseRelFile path)) size Nothing
+    singleFile path size = SingleFile (makeFileItem path size)
+    multiFiles  = MultiFile relRoot . map (uncurry makeFileItem)
+    smallPieces = SHAPieces 2 ""
+    mappingShouldBe info locations =
+        let makeLoc (efs, o, i, cfs) =
+                let complete = CompleteLocation (makeAbsFile cfs)
+                    embedded = EmbeddedLocation (makeAbsFile efs) o i
+                in  PieceLocation embedded complete
+            locs        = map makeLoc <$> locations
+            mapping     = listArray (0, length locs - 1) locs
+            madeMapping = makeMapping info smallPieces root
+        in  madeMapping `shouldBe` PieceMapping mapping
+
 
 propertyTests :: IO ()
 propertyTests = void $ checkParallel $ Group
     "Bencoding Properties"
-    [ ("prop_bencoding", propBencoding)
-    , ("prop_message", propMessage)
+    [ ("prop_bencoding"    , propBencoding)
+    , ("prop_message"      , propMessage)
     , ("prop_multi_message", propMultiMessage)
     ]
 
