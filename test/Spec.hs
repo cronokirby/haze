@@ -184,58 +184,9 @@ pieceBufferSpec = do
 
 pieceWriterSpec :: SpecWith ()
 pieceWriterSpec = do
-    --makeFileStructureSpec
     makeMappingSpec
+    makeFileStructureSpec
 
-makeFileStructureSpec :: SpecWith ()
-makeFileStructureSpec = describe "PieceWriter.makeFileStructure" $ do
-    let makeFile files = SimplePieces (makeAbsFile "foo.txt")
-                                      (makeArr . map makeAbsFile $ files)
-    it "works for single files with even division" $ do
-        makeSingleFile "foo.txt" 2 `fsShouldBe` makeFile ["piece-0.bin"]
-        makeSingleFile "foo.txt" 4
-            `fsShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
-    it "works for single files with uneven division" $ do
-        makeSingleFile "foo.txt" 1 `fsShouldBe` makeFile ["piece-0.bin"]
-        makeSingleFile "foo.txt" 3
-            `fsShouldBe` makeFile ["piece-0.bin", "piece-1.bin"]
-    let makeDeps = map (\(f, fs) -> (makeAbsFile f, map makeAbsFile fs))
-    it "works for multiple files with even division" $ do
-        let items = uncurry makeFileItem <$> [("foo.txt", 2), ("bar.txt", 2)]
-            file       = MultiFile relRoot items
-            makePieces = map (NormalPiece . makeAbsFile)
-            splits     = makeArr $ makePieces ["piece-0.bin", "piece-1.bin"]
-            deps       = makeDeps
-                [("foo.txt", ["piece-0.bin"]), ("bar.txt", ["piece-1.bin"])]
-        file `fsShouldBe` MultiPieces splits deps
-    it "works for multiple files with uneven division" $ do
-        let items = uncurry makeFileItem <$> [("foo.txt", 3), ("bar.txt", 4)]
-            file = MultiFile relRoot items
-            makeNormal = NormalPiece . makeAbsFile
-            makeLeftOver a b c =
-                LeftOverPiece a (makeAbsFile b) (makeAbsFile c)
-            splits = makeArr
-                [ makeNormal "piece-0.bin"
-                , makeLeftOver 1 "foo.txt.end" "bar.txt.start"
-                , makeNormal "piece-2.bin"
-                , makeNormal "piece-3.bin"
-                ]
-            deps = makeDeps
-                [ ("foo.txt", ["piece-0.bin", "foo.txt.end"])
-                , ("bar.txt", ["bar.txt.start", "piece-2.bin", "piece-3.bin"])
-                ]
-        file `fsShouldBe` MultiPieces splits deps
-  where
-    makeFileItem stringPath size =
-        FileItem (fromJust (Path.parseRelFile stringPath)) size Nothing
-    makeArr xs = listArray (0, length xs - 1) xs
-    makeSingleFile stringPath size = SingleFile (makeFileItem stringPath size)
-    root        = fromJust (Path.parseAbsDir "/")
-    relRoot     = fromJust (Path.parseRelDir "./")
-    makeAbsFile = fromJust . Path.parseAbsFile . ("/" ++)
-    smallPieces = SHAPieces 2 ""
-    fsShouldBe info res =
-        makeFileStructure info smallPieces root `shouldBe` res
 
 makeMappingSpec :: SpecWith ()
 makeMappingSpec = describe "PieceWriter.makeMapping" $ do
@@ -254,7 +205,7 @@ makeMappingSpec = describe "PieceWriter.makeMapping" $ do
                 , [("/rel/bar.txt", 0, 2, "/rel/piece-1.bin")]
                 ]
         multiFiles [("foo.txt", 2), ("bar.txt", 2)] `mappingShouldBe` m1
-        let m2 = 
+        let m2 =
                 [ [("/rel/foo.txt", 0, 2, "/rel/piece-0.bin")]
                 , [("/rel/bar.txt", 0, 2, "/rel/piece-1.bin")]
                 , [("/rel/bar.txt", 2, 1, "/rel/piece-2.bin")]
@@ -262,26 +213,22 @@ makeMappingSpec = describe "PieceWriter.makeMapping" $ do
         multiFiles [("foo.txt", 2), ("bar.txt", 3)] `mappingShouldBe` m2
     it "works for multiple files with uneven division" $ do
         let m1 =
-               [ [("/rel/foo.txt", 0, 2, "/rel/piece-0.bin")]
-               , [ ("/rel/foo.txt", 2, 1, "/rel/foo.txt.end")
-                 , ("/rel/bar.txt", 0, 1, "/rel/bar.txt.start")
-                 ]
-               , [("/rel/bar.txt", 1, 1, "/rel/piece-2.bin")]
-               ]
+                [ [("/rel/foo.txt", 0, 2, "/rel/piece-0.bin")]
+                , [ ("/rel/foo.txt", 2, 1, "/rel/foo.txt.end")
+                  , ("/rel/bar.txt", 0, 1, "/rel/bar.txt.start")
+                  ]
+                , [("/rel/bar.txt", 1, 1, "/rel/piece-2.bin")]
+                ]
         multiFiles [("foo.txt", 3), ("bar.txt", 2)] `mappingShouldBe` m1
     it "works for very small files" $ do
-        let f1 = 
-               [("foo.txt", 3)
-               , ("bar.txt", 1)
-               , ("baz.txt", 2)
-               ]
+        let f1 = [("foo.txt", 3), ("bar.txt", 1), ("baz.txt", 2)]
             m1 =
-               [ [("/rel/foo.txt", 0, 2, "/rel/piece-0.bin")]
-               , [("/rel/foo.txt", 2, 1, "/rel/foo.txt.end")
-                 , ("/rel/bar.txt", 0, 1, "/rel/bar.txt.start")
-                 ]
-               , [("/rel/baz.txt", 0, 2, "/rel/piece-2.bin")]
-               ]
+                [ [("/rel/foo.txt", 0, 2, "/rel/piece-0.bin")]
+                , [ ("/rel/foo.txt", 2, 1, "/rel/foo.txt.end")
+                  , ("/rel/bar.txt", 0, 1, "/rel/bar.txt.start")
+                  ]
+                , [("/rel/baz.txt", 0, 2, "/rel/piece-2.bin")]
+                ]
         multiFiles f1 `mappingShouldBe` m1
   where
     makeAbsFile = fromJust . Path.parseAbsFile . ("/" ++)
@@ -301,6 +248,72 @@ makeMappingSpec = describe "PieceWriter.makeMapping" $ do
             mapping     = listArray (0, length locs - 1) locs
             madeMapping = makeMapping info smallPieces root
         in  madeMapping `shouldBe` PieceMapping mapping
+
+makeFileStructureSpec :: SpecWith ()
+makeFileStructureSpec = describe "PieceWriter.makeFileStructure" $ do
+    it "works for single files with even division" $ do
+        let splits = [makeNormal "piece-0.bin"]
+            deps   = [("foo.txt", ["piece-0.bin"])]
+        singleFile "foo.txt" 2 `fsShouldBe` makeStructure splits deps
+    it "works for single files with uneven division" $ do
+        let splits = [makeNormal "piece-0.bin", makeNormal "piece-1.bin"]
+            deps   = [("foo.txt", ["piece-0.bin", "piece-1.bin"])]
+        singleFile "foo.txt" 3 `fsShouldBe` makeStructure splits deps
+    it "works for multiple files with even division" $ do
+        let fs = [("foo.txt", 2), ("bar.txt", 2)]
+            splits =
+                [makeNormal "/rel/piece-0.bin", makeNormal "/rel/piece-1.bin"]
+            deps =
+                [ ("/rel/foo.txt", ["/rel/piece-0.bin"])
+                , ("/rel/bar.txt", ["/rel/piece-1.bin"])
+                ]
+        multiFiles fs `fsShouldBe` makeStructure splits deps
+    it "works for multiple files with uneven division" $ do
+        let fs = [("foo.txt", 3), ("bar.txt", 2)]
+            splits =
+                [ makeNormal "/rel/piece-0.bin"
+                , makeSplits
+                    [(1, "/rel/foo.txt.end"), (1, "/rel/bar.txt.start")]
+                , makeNormal "/rel/piece-2.bin"
+                ]
+            deps =
+                [ ("/rel/foo.txt", ["/rel/piece-0.bin", "/rel/foo.txt.end"])
+                , ("/rel/bar.txt", ["/rel/bar.txt.start", "/rel/piece-2.bin"])
+                ]
+        multiFiles fs `fsShouldBe` makeStructure splits deps
+    it "works for small files" $ do
+        let fs = [("foo.txt", 3), ("bar.txt", 1), ("baz.txt", 2)]
+            splits =
+                    [ makeNormal "/rel/piece-0.bin"
+                    , makeSplits
+                        [(1, "rel/foo.txt.end"), (1, "/rel/bar.txt.start")]
+                    , makeNormal "/rel/piece-2.bin"
+                    ]
+            deps =
+                [ ("/rel/foo.txt", ["/rel/piece-0.bin", "/rel/foo.txt.end"])
+                , ("/rel/bar.txt", ["/rel/bar.txt.start"])
+                , ("/rel/baz.txt", ["/rel/piece-2.bin"])
+                ]
+        multiFiles fs `fsShouldBe` makeStructure splits deps
+  where
+    makeAbsFile = fromJust . Path.parseAbsFile . ("/" ++)
+    root        = fromJust (Path.parseAbsDir "/")
+    relRoot     = fromJust (Path.parseRelDir "./rel")
+    makeFileItem path size =
+        FileItem (fromJust (Path.parseRelFile path)) size Nothing
+    singleFile path size = SingleFile (makeFileItem path size)
+    multiFiles  = MultiFile relRoot . map (uncurry makeFileItem)
+    smallPieces = SHAPieces 2 ""
+    makeNormal  = NormalPiece . makeAbsFile
+    makeSplits  = SplitPieces . map (\(i, f) -> (i, makeAbsFile f))
+    makeStructure splits deps =
+        let splitArr = listArray (0, length splits - 1) splits
+            absDeps =
+                map (\(f, fs) -> (makeAbsFile f, map makeAbsFile fs)) deps
+        in  FileStructure splitArr absDeps
+    fsShouldBe info res =
+        let mapping = makeMapping info smallPieces root
+        in  makeFileStructure mapping `shouldBe` res
 
 
 propertyTests :: IO ()
