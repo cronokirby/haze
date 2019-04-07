@@ -40,6 +40,7 @@ import qualified Data.ByteString               as BS
 import           Data.Ix                        ( inRange )
 import qualified Data.Set                      as Set
 import           Data.Time.Clock                ( UTCTime
+                                                , NominalDiffTime
                                                 , diffUTCTime
                                                 , getCurrentTime
                                                 )
@@ -51,9 +52,8 @@ import           Network.Socket.ByteString      ( recv
                                                 )
 
 import Data.RateWindow                          ( RateWindow
-                                                , makeRateWindow
-                                                , addRatePoint
-                                                , getRate
+                                                , emptyRateWindow
+                                                , addDownload
                                                 )                                                
 import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
@@ -238,7 +238,7 @@ data PeerMInfo = PeerMInfo
     choose which sockets to reciprocate downloading to, so that it can
     tell the peers managing those to do so.
     -}
-    , peerMDLRate :: !(TVar Double)
+    , peerMDLRate :: !(TVar RateWindow)
     -- | The peer we're connected to, identifying this process
     , peerMMyPeer :: !Peer
     }
@@ -429,20 +429,19 @@ sendKeepAliveLoop = do
 
 {- | A loop for a process that will receive, parse, and react to messages.
 -}
-recvLoop :: ParseCallBack -> UTCTime -> RateWindow -> PeerM ()
-recvLoop cb thn rates = do
+recvLoop :: ParseCallBack -> PeerM ()
+recvLoop cb = do
     socket <- gets peerSocket
     bytes  <- liftIO $ recv socket 1024
     dlRate <- asks peerMDLRate
     now    <- liftIO getCurrentTime
-    let delta = diffUTCTime now thn
-        newRates  = addRatePoint (BS.length bytes) delta rates
-    atomically $ writeTVar dlRate (getRate newRates)
+    let shiftRates = addDownload (BS.length bytes) now
+    atomically $ modifyTVar' dlRate shiftRates
     case parseMessages cb bytes of
         Nothing          -> cancel
         Just (msgs, cb') -> do
             forM_ msgs reactToMessage
-            recvLoop cb' now newRates
+            recvLoop cb'
 
 
 {- | Start the tree of processes given the initial information a peer needs.
@@ -458,8 +457,7 @@ startPeer = do
     let startAsync = liftIO . async . runPeerM r
     checkAlive <- startAsync checkKeepAliveLoop
     stayAlive <- startAsync sendKeepAliveLoop
-    now       <- liftIO getCurrentTime
-    socket    <- startAsync (recvLoop firstParseCallBack now (makeRateWindow 5))
+    socket    <- startAsync (recvLoop firstParseCallBack)
     manager   <- startAsync managerLoop
     writer    <- startAsync writerLoop
     void . liftIO $ waitAnyCatchCancel 

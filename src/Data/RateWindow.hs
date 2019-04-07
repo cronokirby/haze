@@ -6,67 +6,73 @@ This is mainly useful for calculating download rates for a peer.
 We can measure rates on a connection by looking at how many bytes we received
 in a packet, and the time elapsed since the last packet. The problem is that this
 "point-wise" estimate is prone to large fluctuations, so we want a smoothing
-mechanism. By using a sliding window of these data points, we can average them
-to get a better estimate of the rate.
+mechanism. By using a sliding window of these data points, we can look at how many
+bytes were downloaded in the last time frame.
 -}
 module Data.RateWindow
     ( RateWindow
-    , makeRateWindow
-    , ByteCount
-    , addRatePoint
+    , emptyRateWindow
     , getRate
+    , addDownload
     )
 where
 
 import           Relude
 
-import           Data.Sequence                  ( (|>)
+import           Data.Sequence                  ( (<|)
                                                 , Seq(..)
+                                                , dropWhileR
                                                 )
-import qualified Data.Sequence                 as Seq
 import qualified Data.Time.Clock               as Time
 
 
 -- | ByteCount is an Int, counting the number of bytes received over an interval
 type ByteCount = Int
 
-{- | RateWindow allows us to keep a sliding window of download rates
+{- | Represents a sliding time window, allowing us to calculate average rates
 
-We can insert point intervals of downloads, and then average them out,
-in order to get a more accurate point of view on the download rate.
-
-The main data flow for this type should be first constructing it
-with 'makeRateWindow' then subsequently using 'addRatePoint' each time
-a packet is received, and 'getRate' to get the current rate estimate.
+The flow for using this type is to start off with
+'emptyRateWindow', then use 'addDownload' in a monotonic way,
+until eventually calculating the recent rate with 'getRate',
+which will clean up old download stamps.
 -}
-data RateWindow = RateWindow Int (Seq.Seq (ByteCount, Time.NominalDiffTime))
+newtype RateWindow = RateWindow (Seq (ByteCount, Time.UTCTime))
 
--- | Construct a RateWindow given a window size
-makeRateWindow :: Int -> RateWindow
-makeRateWindow maxSize = RateWindow maxSize Empty
+-- | an empty rate window
+emptyRateWindow :: RateWindow
+emptyRateWindow = RateWindow Empty
 
--- | Take off the oldest timestamp if the rate window has too many elements
-removeOldest :: RateWindow -> RateWindow
-removeOldest (RateWindow maxSize sq) =
-    let sq' = if Seq.length sq >= maxSize then rmFront sq else sq
-    in  RateWindow maxSize sq'
+{- | Get the download rate in a certain period from the current time.
+
+The first argument is the point from which to search back
+and calculate an average. The second is the window over which to look.
+
+This will clean up timestamps that are past this interval,
+so this is intended to be used with a consistent interval.
+-}
+getRate
+    :: Time.UTCTime
+    -> Time.NominalDiffTime
+    -> RateWindow
+    -> (RateWindow, Double)
+getRate now size (RateWindow dls) =
+    let isOld time = Time.diffUTCTime now time > size
+        current = dropWhileR (\(_, time) -> isOld time) dls
+        rate    = case current of
+            Empty -> 0.0
+            (_ :|> (_, oldest)) ->
+                let fullCount = sum (fmap fst current)
+                    window    = Time.diffUTCTime now oldest
+                in  calcRate fullCount window
+    in  (RateWindow current, rate)
   where
-    rmFront :: Seq.Seq a -> Seq.Seq a
-    rmFront Empty        = Empty
-    rmFront (_ :<| rest) = rest
+    calcRate :: ByteCount -> Time.NominalDiffTime -> Double
+    calcRate count diff = fromRational (fromIntegral count / toRational diff)
 
--- | Add a single download point to the rate window
-addRatePoint :: ByteCount -> Time.NominalDiffTime -> RateWindow -> RateWindow
-addRatePoint count delta (RateWindow maxSize sq) =
-    removeOldest $ RateWindow maxSize (sq |> (count, delta))
+{- | Add a new data point to the rate window.
 
-{- | Get the full average from the series of point stamps
-
-This returns (total bytes receieved) / (total seconds elapsed), giving
-a much smoother download rate compared to each tcp response.
+Note that the functions for this structure assume that
+the time for data points we add will only increase.
 -}
-getRate :: RateWindow -> Double
-getRate (RateWindow _ sq) =
-    let add (acc1, acc2) (a, b) = (acc1 + a, acc2 + b)
-        (count, delta) = foldl' add (0, 0) sq
-    in  fromIntegral count / fromRational (toRational delta)
+addDownload :: ByteCount -> Time.UTCTime -> RateWindow -> RateWindow
+addDownload count time (RateWindow sq) = RateWindow ((count, time) <| sq)

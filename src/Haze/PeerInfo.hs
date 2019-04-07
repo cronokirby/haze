@@ -31,6 +31,7 @@ import           Control.Concurrent.STM.TBQueue ( TBQueue
 import           Data.Array                     ( Array )
 import qualified Data.HashMap.Strict           as HM
 
+import           Data.RateWindow                ( RateWindow, emptyRateWindow )
 import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , WriterToPeer(..)
                                                 , ManagerToPeer(..)
@@ -56,8 +57,8 @@ data PeerHandle = PeerHandle
     , handleFromWriter :: !(TBQueue WriterToPeer)
     -- | The specific channel from the manager
     , handleFromManager :: !(TBQueue ManagerToPeer)
-    -- | The download rate for this peer
-    , handleDLRate :: !(TVar Double)
+    -- | The rate window for downloading
+    , handleDLRate :: !(TVar RateWindow)
     -- | The peer associated with this handle
     , handlePeer :: !Peer
     }
@@ -72,14 +73,13 @@ data PeerSpecific = PeerSpecific
     { peerFromWriter :: !(TBQueue WriterToPeer) -- ^ a queue from the writer
     -- | A queue to allow the manager to send us messages
     , peerFromManager :: !(TBQueue ManagerToPeer)
-    -- | The download rate for this specific peer
-    , peerDLRate :: !(TVar Double)
+    -- | The download rate window for this peer
+    , peerDLRate :: !(TVar RateWindow)
     }
 
 -- | Create a new empty struct of PeerSpecific Data
 makePeerSpecific :: MonadIO m => m PeerSpecific
-makePeerSpecific =
-    PeerSpecific <$> mkQueue <*> mkQueue <*> newTVarIO 0
+makePeerSpecific = PeerSpecific <$> mkQueue <*> mkQueue <*> newTVarIO emptyRateWindow
     where mkQueue = liftIO (newTBQueueIO 256)
 
 {- | This holds general information about the operation of the peers.
@@ -124,8 +124,7 @@ addPeer newPeer info = do
 
 sendWriterMsg :: MonadIO m => WriterToPeer -> PeerSpecific -> m ()
 sendWriterMsg msg specific =
-    let q = peerFromWriter specific
-    in atomically $ writeTBQueue q msg
+    let q = peerFromWriter specific in atomically $ writeTBQueue q msg
 
 {- | This can be used to send a writer message to a specific peer
 
@@ -133,14 +132,14 @@ This does nothing if the peer isn't present
 -}
 sendWriterToPeer :: (MonadIO m, HasPeerInfo m) => WriterToPeer -> Peer -> m ()
 sendWriterToPeer msg peer = do
-    info <- getPeerInfo
+    info      <- getPeerInfo
     maybeInfo <- HM.lookup peer <$> readTVarIO (infoMap info)
     whenJust maybeInfo (sendWriterMsg msg)
 
 -- | Send a writer msg to every peer
 sendWriterToAll :: (MonadIO m, HasPeerInfo m) => WriterToPeer -> m ()
 sendWriterToAll msg = do
-    info <- getPeerInfo
+    info      <- getPeerInfo
     peerInfos <- HM.elems <$> readTVarIO (infoMap info)
     forM_ peerInfos (sendWriterMsg msg)
 
