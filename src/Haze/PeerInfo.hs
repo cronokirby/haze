@@ -31,7 +31,9 @@ import           Control.Concurrent.STM.TBQueue ( TBQueue
 import           Data.Array                     ( Array )
 import qualified Data.HashMap.Strict           as HM
 
-import           Data.RateWindow                ( RateWindow, emptyRateWindow )
+import           Data.RateWindow                ( RateWindow
+                                                , emptyRateWindow
+                                                )
 import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , WriterToPeer(..)
                                                 , ManagerToPeer(..)
@@ -79,7 +81,8 @@ data PeerSpecific = PeerSpecific
 
 -- | Create a new empty struct of PeerSpecific Data
 makePeerSpecific :: MonadIO m => m PeerSpecific
-makePeerSpecific = PeerSpecific <$> mkQueue <*> mkQueue <*> newTVarIO emptyRateWindow
+makePeerSpecific =
+    PeerSpecific <$> mkQueue <*> mkQueue <*> newTVarIO emptyRateWindow
     where mkQueue = liftIO (newTBQueueIO 256)
 
 {- | This holds general information about the operation of the peers.
