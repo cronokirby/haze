@@ -288,12 +288,29 @@ getPiece (PieceMapping mappings) piece =
 
 
 
--- | Represents the data a piece writer needs
+{- | Represents the data a piece writer needs
+
+A piece writer needs to have information about how
+to write pieces to disk, and how to retrieve them from disk.
+To be able to listen to and respond to peers, it needs
+access to 'PeerInfo'.
+-}
 data PieceWriterInfo = PieceWriterInfo
     { pieceStructure :: !FileStructure
     , pieceMapping :: !PieceMapping
     , peerInfo :: !PeerInfo
     }
+
+{- | Construct the information a piece writer needs.
+
+We need the peer information, as well as the necessary information
+to construct the plans for saving pieces.
+-}
+makePieceWriterInfo :: PeerInfo -> FileInfo -> SHAPieces -> AbsDir -> PieceWriterInfo
+makePieceWriterInfo info fileInfo shaPieces root =
+    let mapping   = makeMapping fileInfo shaPieces root
+        structure = makeFileStructure mapping
+    in  PieceWriterInfo structure mapping info
 
 -- | A context with access to what a piece writer process needs
 newtype PieceWriterM a = PieceWriterM (ReaderT PieceWriterInfo IO a)
@@ -307,7 +324,7 @@ instance HasPieceBuffer PieceWriterM where
 
 -- | Run a piece writer function given the right context
 runPieceWriterM :: PieceWriterInfo -> PieceWriterM a -> IO a
-runPieceWriterM info (PieceWriterM reader) = runReaderT reader info
+runPieceWriterM info (PieceWriterM r) = runReaderT r info
 
 -- | Lookup and write the pieces in a pieceBuff
 writePiecesM :: PieceWriterM ()
@@ -327,4 +344,3 @@ pieceWriterLoop = forever $ do
             pieceData <- getPiece mapping piece
             let block = BS.take size $ BS.drop offset pieceData
             sendWriterToPeer (PieceFulfilled index block) peer
-
