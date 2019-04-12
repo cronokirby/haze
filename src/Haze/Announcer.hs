@@ -177,10 +177,8 @@ launchAnnouncer = do
         ($ next) . maybe noTrackers $ \tracker -> do
             r <- tryTracker connInfo tracker
             case r of
-                ScoutTimedOut ->
-                    putTextLn "No response after 1s"
-                ScoutReturned res ->
-                    whenM (handleAnnounceRes res) settle
+                ScoutTimedOut     -> putTextLn "No response after 1s"
+                ScoutReturned res -> whenM (handleAnnounceRes res) settle
                 ScoutUnknownTracker t ->
                     putTextLn ("Skipping unknown tracker " <> t)
     handleAnnounceRes :: AnnounceResult -> AnnouncerM Bool
