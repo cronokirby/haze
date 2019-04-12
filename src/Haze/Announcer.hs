@@ -7,20 +7,27 @@ to the 'AnnounceInfo' messages it produces. Because we only
 listen to the announces as they arrive, we can be agnostic to changes
 in the underlying tracker, for example.
 -}
-module Announcer
-    ()
+module Haze.Announcer
+    ( AnnouncerInfo
+    , AnnouncerM
+    , makeAnnouncerInfo
+    , runAnnouncerM
+    , launchAnnouncer
+    )
 where
 
 import           Relude
 
 import           Control.Concurrent             ( threadDelay )
+import           Control.Concurrent.Async       ( async
+                                                , link
+                                                , race
+                                                )
 import           Control.Concurrent.STM.TBQueue ( TBQueue )
 import           Control.Exception.Safe         ( MonadThrow
                                                 , MonadCatch
                                                 , MonadMask
-                                                , Exception
                                                 , bracket
-                                                , throw
                                                 , throwString
                                                 )
 import qualified Data.Attoparsec.ByteString    as AP
@@ -35,7 +42,6 @@ import qualified Network.Socket                as Sock
 import           Network.Socket.ByteString      ( sendAllTo
                                                 , recv
                                                 )
-import           System.IO.Error                ( userError )
 
 import           Data.TieredList                ( TieredList
                                                 , popTiered
@@ -45,11 +51,10 @@ import           Haze.Tracker                   ( Announce(..)
                                                 , AnnounceInfo(..)
                                                 , MetaInfo(..)
                                                 , Tracker(..)
-                                                , UDPTrackerRequest(..)
+                                                , UDPTrackerRequest
                                                 , UDPConnection(..)
                                                 , squashedTrackers
                                                 , updateTransactionID
-                                                , metaFromBytes
                                                 , newTrackerRequest
                                                 , trackerQuery
                                                 , announceFromHTTP
@@ -60,6 +65,26 @@ import           Haze.Tracker                   ( Announce(..)
                                                 , updateUDPTransID
                                                 )
 
+
+-- | Get the current seconds part of a day
+getSeconds :: MonadIO m => m DiffTime
+getSeconds = liftIO $ utctDayTime <$> getCurrentTime
+
+
+{- | Generates a peer id from scratch.
+
+Note that this should be generated before the first interaction with
+a tracker, and not at every interaction with the tracker.
+
+Uses the Azureus style id, with HZ as the prefix, and then appends
+a UTC timestamp, before then taking only the first 20 bytes.
+-}
+generatePeerID :: MonadIO m => m ByteString
+generatePeerID = liftIO $ do
+    secs <- getSeconds
+    let whole = "-HZ010-" <> show secs
+        cut   = BS.take 20 whole
+    return cut
 
 -- | Represents an error that can interrupt interaction with a Tracker
 data AnnounceError
@@ -113,10 +138,78 @@ newtype AnnouncerM a = AnnouncerM (ReaderT AnnouncerInfo IO a)
 runAnnouncerM :: AnnouncerM a -> AnnouncerInfo -> IO a
 runAnnouncerM (AnnouncerM m) = runReaderT m
 
+-- | Tries to fetch the next tracker, popping it off the list
+popTracker :: AnnouncerM (Maybe Tracker)
+popTracker = do
+    ref   <- asks announcerTrackers
+    tiers <- readIORef ref
+    case popTiered tiers of
+        Nothing           -> return Nothing
+        Just (next, rest) -> do
+            writeIORef ref rest
+            return (Just next)
 
--- | Get the current seconds part of a day
-getSeconds :: MonadIO m => m DiffTime
-getSeconds = liftIO $ utctDayTime <$> getCurrentTime
+-- | The result of an initial scout
+data ScoutResult
+    -- | The attempt timed out
+    = ScoutTimedOut
+    -- | The scout returned an initial result
+    | ScoutReturned !AnnounceResult
+    -- | We tried to connect to an unknown service
+    | ScoutUnknownTracker !Text
+
+launchAnnouncer :: AnnouncerM ()
+launchAnnouncer = do
+    peerID             <- generatePeerID
+    AnnouncerInfo {..} <- ask
+    let connInfo = ConnInfo peerID announcerTorrent announcerMsg
+    scoutTrackers connInfo
+  where
+    scoutTrackers connInfo = do
+        next <- popTracker
+        ($ next) . maybe noTrackers $ \tracker -> do
+            r <- tryTracker connInfo tracker
+            case r of
+                ScoutTimedOut -> do
+                    putTextLn "No response after 1s"
+                    scoutTrackers connInfo
+                ScoutReturned info -> do
+                    print info
+                    settle
+                ScoutUnknownTracker t -> do
+                    putTextLn ("Skipping unknown tracker " <> t)
+                    scoutTrackers connInfo
+    settle :: AnnouncerM ()
+    settle = forever $ do
+        mvar <- asks announcerMsg
+        info <- liftIO $ readMVar mvar
+        print info
+    tryTracker :: ConnInfo -> Tracker -> AnnouncerM ScoutResult
+    tryTracker connInfo tracker = do
+        putTextLn ("Trying: " <> show tracker)
+        case tracker of
+            HTTPTracker url ->
+                connectHTTP url & runConnWith connInfo & launchConn
+            UDPTracker url prt ->
+                connectUDP url prt
+                    & runConnWith connInfo
+                    & Sock.withSocketsDo
+                    & launchConn
+            UnknownTracker t -> return (ScoutUnknownTracker t)
+    noTrackers :: MonadIO m => m ()
+    noTrackers = putTextLn "No more trackers left to try :("
+    launchConn :: IO () -> AnnouncerM ScoutResult
+    launchConn action = do
+        liftIO $ async action >>= link
+        mvar <- asks announcerMsg
+        res  <- liftIO $ race (read mvar) timeOut
+        return (either id id res)
+    read :: MVar AnnounceResult -> IO ScoutResult
+    read mvar = ScoutReturned <$> takeMVar mvar
+    timeOut :: IO ScoutResult
+    timeOut = do
+        threadDelay 1000000
+        return ScoutTimedOut
 
 
 -- | The information a connection to a tracker needs

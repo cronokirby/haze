@@ -23,6 +23,7 @@ source-repository head
 library
   hs-source-dirs:      src
   exposed-modules:     Haze
+                       Haze.Announcer
                        Haze.Bencoding
                        Haze.Bits
                        Haze.Client
