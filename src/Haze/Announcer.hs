@@ -23,7 +23,9 @@ import           Control.Concurrent.Async       ( async
                                                 , link
                                                 , race
                                                 )
-import           Control.Concurrent.STM.TBQueue ( TBQueue )
+import           Control.Concurrent.STM.TBQueue ( TBQueue
+                                                , writeTBQueue
+                                                )
 import           Control.Exception.Safe         ( MonadThrow
                                                 , MonadCatch
                                                 , MonadMask
@@ -138,6 +140,12 @@ newtype AnnouncerM a = AnnouncerM (ReaderT AnnouncerInfo IO a)
 runAnnouncerM :: AnnouncerM a -> AnnouncerInfo -> IO a
 runAnnouncerM (AnnouncerM m) = runReaderT m
 
+-- | Report a successful announce back
+reportAnnounceInfo :: AnnounceInfo -> AnnouncerM ()
+reportAnnounceInfo info = do
+    results <- asks announcerResults
+    atomically $ writeTBQueue results info
+
 -- | Tries to fetch the next tracker, popping it off the list
 popTracker :: AnnouncerM (Maybe Tracker)
 popTracker = do
@@ -165,25 +173,26 @@ launchAnnouncer = do
     let connInfo = ConnInfo peerID announcerTorrent announcerMsg
     scoutTrackers connInfo
   where
-    scoutTrackers connInfo = do
+    scoutTrackers connInfo = forever $ do
         next <- popTracker
         ($ next) . maybe noTrackers $ \tracker -> do
             r <- tryTracker connInfo tracker
             case r of
-                ScoutTimedOut -> do
+                ScoutTimedOut ->
                     putTextLn "No response after 1s"
-                    scoutTrackers connInfo
-                ScoutReturned info -> do
-                    print info
-                    settle
-                ScoutUnknownTracker t -> do
+                ScoutReturned res ->
+                    whenM (handleAnnounceRes res) settle
+                ScoutUnknownTracker t ->
                     putTextLn ("Skipping unknown tracker " <> t)
-                    scoutTrackers connInfo
+    handleAnnounceRes :: AnnounceResult -> AnnouncerM Bool
+    handleAnnounceRes res = case res of
+        BadAnnounce  err  -> print err $> False
+        RealAnnounce info -> reportAnnounceInfo info $> True
     settle :: AnnouncerM ()
-    settle = forever $ do
+    settle = do
         mvar <- asks announcerMsg
-        info <- liftIO $ readMVar mvar
-        print info
+        res  <- liftIO $ readMVar mvar
+        whenM (handleAnnounceRes res) settle
     tryTracker :: ConnInfo -> Tracker -> AnnouncerM ScoutResult
     tryTracker connInfo tracker = do
         putTextLn ("Trying: " <> show tracker)
@@ -200,7 +209,7 @@ launchAnnouncer = do
     noTrackers = putTextLn "No more trackers left to try :("
     launchConn :: IO () -> AnnouncerM ScoutResult
     launchConn action = do
-        liftIO $ async action >>= link
+        void . liftIO $ async action
         mvar <- asks announcerMsg
         res  <- liftIO $ race (read mvar) timeOut
         return (either id id res)

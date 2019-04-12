@@ -13,7 +13,10 @@ where
 
 import           Relude
 
-import           Control.Concurrent.STM.TBQueue ( newTBQueueIO )
+import           Control.Concurrent.Async       ( async )
+import           Control.Concurrent.STM.TBQueue ( newTBQueueIO
+                                                , readTBQueue
+                                                )
 
 import           Haze.Announcer                 ( makeAnnouncerInfo
                                                 , runAnnouncerM
@@ -33,4 +36,7 @@ launchClient file = do
         Right meta -> do
             q    <- newTBQueueIO 16
             info <- makeAnnouncerInfo meta q
-            runAnnouncerM launchAnnouncer info
+            void . async $ runAnnouncerM launchAnnouncer info
+            forever $ do
+                ann <- atomically $ readTBQueue q
+                print ann
