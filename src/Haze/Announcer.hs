@@ -20,7 +20,6 @@ import           Relude
 
 import           Control.Concurrent             ( threadDelay )
 import           Control.Concurrent.Async       ( async
-                                                , link
                                                 , race
                                                 )
 import           Control.Concurrent.STM.TBQueue ( TBQueue
