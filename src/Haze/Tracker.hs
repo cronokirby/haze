@@ -37,6 +37,8 @@ module Haze.Tracker
     , ReqEvent(..)
     , TrackStatus(..)
     , firstTrackStatus
+    , updateTrackStatus
+    , updateUDPTrackStatus
     , TrackerRequest(..)
     , newTrackerRequest
     , updateTransactionID
@@ -339,6 +341,10 @@ updateTransactionID :: Maybe ByteString -> TrackerRequest -> TrackerRequest
 updateTransactionID transID treq = 
     treq { treqTransactionID = transID, treqEvent = ReqEmpty }
 
+-- | Update the tracking status of a request
+updateTrackStatus :: TrackStatus -> TrackerRequest -> TrackerRequest
+updateTrackStatus status treq = treq { treqStatus = status }
+
 
 -- | Encodes a 'TrackerRequest' as query parameters
 trackerQuery :: TrackerRequest -> [(ByteString, Maybe ByteString)]
@@ -396,6 +402,11 @@ updateUDPTransID transID (UDPTrackerRequest c treq) =
 updateUDPConnID :: ByteString -> UDPTrackerRequest -> UDPTrackerRequest
 updateUDPConnID connID (UDPTrackerRequest _ treq) =
     UDPTrackerRequest connID treq
+
+-- | Update the tracking status of a UDP request
+updateUDPTrackStatus :: TrackStatus -> UDPTrackerRequest -> UDPTrackerRequest
+updateUDPTrackStatus status (UDPTrackerRequest c treq) =
+    UDPTrackerRequest c (updateTrackStatus status treq)
 
 -- | Encodes a UDP request as a bytestring
 encodeUDPRequest :: UDPTrackerRequest -> ByteString

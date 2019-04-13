@@ -51,11 +51,14 @@ import           Haze.Bencoding                 ( DecodeError(..) )
 import           Haze.Tracker                   ( Announce(..)
                                                 , AnnounceInfo(..)
                                                 , MetaInfo(..)
+                                                , TrackStatus(..)
                                                 , Tracker(..)
+                                                , TrackerRequest(..)
                                                 , UDPTrackerRequest
                                                 , UDPConnection(..)
                                                 , squashedTrackers
                                                 , updateTransactionID
+                                                , updateTrackStatus
                                                 , newTrackerRequest
                                                 , trackerQuery
                                                 , announceFromHTTP
@@ -64,6 +67,7 @@ import           Haze.Tracker                   ( Announce(..)
                                                 , newUDPRequest
                                                 , encodeUDPRequest
                                                 , updateUDPTransID
+                                                , updateUDPTrackStatus
                                                 )
 
 
@@ -113,6 +117,8 @@ data AnnouncerInfo = AnnouncerInfo
     { announcerTorrent :: !MetaInfo
     -- | This allows us to report back successful announces
     , announcerResults :: !(TBQueue AnnounceInfo)
+    -- | We just hold on to this to pass on to scouts
+    , announcerStatus :: !(TVar TrackStatus)
     -- | An 'MVar' is sufficient to receive 'AnnounceInfo' from our scout
     , announcerMsg :: !(MVar AnnounceResult)
     {- | This holds a list of Trackers we want to try and connect to.
@@ -124,9 +130,13 @@ data AnnouncerInfo = AnnouncerInfo
     }
 
 makeAnnouncerInfo
-    :: MonadIO m => MetaInfo -> TBQueue AnnounceInfo -> m AnnouncerInfo
-makeAnnouncerInfo torrent results =
-    AnnouncerInfo torrent results <$> newEmptyMVar <*> trackers
+    :: MonadIO m
+    => MetaInfo
+    -> TVar TrackStatus
+    -> TBQueue AnnounceInfo
+    -> m AnnouncerInfo
+makeAnnouncerInfo torrent status results =
+    AnnouncerInfo torrent results status <$> newEmptyMVar <*> trackers
     where trackers = newIORef (squashedTrackers torrent)
 
 -- | Represents the context for an announcer
@@ -169,7 +179,8 @@ launchAnnouncer :: AnnouncerM ()
 launchAnnouncer = do
     peerID             <- generatePeerID
     AnnouncerInfo {..} <- ask
-    let connInfo = ConnInfo peerID announcerTorrent announcerMsg
+    let connInfo =
+            ConnInfo peerID announcerTorrent announcerMsg announcerStatus
     scoutTrackers connInfo
   where
     scoutTrackers connInfo = forever $ do
@@ -223,6 +234,8 @@ data ConnInfo = ConnInfo
     { connPeerID :: !ByteString
     , connTorrent :: !MetaInfo
     , connMsg :: !(MVar AnnounceResult)
+    -- | This is treated as read only
+    , connStatus :: !(TVar TrackStatus)
     }
 
 -- | Represent a context with access to a connection
@@ -271,11 +284,15 @@ connectHTTP url = do
             Right announce          -> return announce
         info <- getAnnInfo fullAnnounce
         goodAnnounce info
-        let newTReq = updateReq trackerReq info
-            time    = 1000000 * annInterval info
+        newTReq <- updateReq trackerReq info
+        let time = 1000000 * annInterval info
         liftIO $ threadDelay time
         loop mgr req newTReq
-    updateReq treq info = updateTransactionID (annTransactionID info) treq
+    updateReq :: TrackerRequest -> AnnounceInfo -> ConnM TrackerRequest
+    updateReq treq info = do
+        let newID = updateTransactionID (annTransactionID info) treq
+        status <- asks connStatus >>= readTVarIO
+        return (updateTrackStatus status newID)
 
 
 -- | Represents a UDP connection to some tracker
@@ -299,9 +316,9 @@ connectUDP url' prt' =
                 req      <- makeUDPRequest conn
                 return (req, connTime)
             else return (request, lastConn)
-        info <- getAnnounce udp req
-        let newReq = updateReq info request
-            time   = 1000000 * annInterval info
+        info   <- getAnnounce udp req
+        newReq <- updateReq info request
+        let time = 1000000 * annInterval info
         liftIO $ threadDelay time
         loop udp newReq connTime
     connect :: UDPSocket -> ConnM UDPConnection
@@ -324,9 +341,11 @@ connectUDP url' prt' =
         info     <- getAnnInfo announce
         goodAnnounce info
         return info
-    updateReq :: AnnounceInfo -> UDPTrackerRequest -> UDPTrackerRequest
-    updateReq info req =
-        maybe req (`updateUDPTransID` req) (annTransactionID info)
+    updateReq :: AnnounceInfo -> UDPTrackerRequest -> ConnM UDPTrackerRequest
+    updateReq info req = do
+        let newID = maybe req (`updateUDPTransID` req) (annTransactionID info)
+        status <- asks connStatus >>= readTVarIO
+        return (updateUDPTrackStatus status newID)
     makeUDPSocket :: MonadIO m => Text -> Text -> m UDPSocket
     makeUDPSocket url prt = liftIO $ do
         let urlS  = toString url

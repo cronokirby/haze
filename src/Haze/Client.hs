@@ -23,7 +23,9 @@ import           Haze.Announcer                 ( makeAnnouncerInfo
                                                 , launchAnnouncer
                                                 )
 import           Haze.Bencoding                 ( DecodeError(..) )
-import           Haze.Tracker                   ( metaFromBytes )
+import           Haze.Tracker                   ( metaFromBytes
+                                                , firstTrackStatus
+                                                )
 
 
 launchClient :: FilePath -> IO ()
@@ -35,7 +37,8 @@ launchClient file = do
             putTextLn err
         Right meta -> do
             q    <- newTBQueueIO 16
-            info <- makeAnnouncerInfo meta q
+            v    <- newTVarIO (firstTrackStatus meta)
+            info <- makeAnnouncerInfo meta v q
             void . async $ runAnnouncerM launchAnnouncer info
             forever $ do
                 ann <- atomically $ readTBQueue q
