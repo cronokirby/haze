@@ -35,6 +35,8 @@ module Haze.Tracker
     , decodeAnnounce
     , announceFromHTTP
     , ReqEvent(..)
+    , TrackStatus(..)
+    , firstTrackStatus
     , TrackerRequest(..)
     , newTrackerRequest
     , updateTransactionID
@@ -287,18 +289,30 @@ data ReqEvent
     | ReqEmpty
     deriving (Show)
 
+{- | Represents information about the health of the request.
+
+The tracker is interested in this information, as well as the user.
+-}
+data TrackStatus = TrackStatus
+    { trackUp :: !Int64 -- | The total number of bytes uploaded
+    -- | The total number of bytes downloaded
+    , trackDown :: !Int64
+    -- | the total number of bytes in the file left to download
+    , trackLeft :: !Int64
+    }
+    deriving (Show)
+
+-- | Create the first track status given the torrent file
+firstTrackStatus :: MetaInfo -> TrackStatus
+firstTrackStatus meta = TrackStatus 0 0 (totalFileSize meta)
+
 -- | Represents the information in a request to a tracker
 data TrackerRequest = TrackerRequest
     { treqInfoHash :: !SHA1
     -- | Represents the peer id for this client
     , treqPeerID :: !ByteString
     , treqPort :: !PortNumber
-    -- | The total number of bytes uploaded
-    , treqUploaded :: !Int64
-    -- | The total number of bytes downloaded
-    , treqDownloaded :: !Int64
-    -- | The number of bytes in the file left to download
-    , treqLeft :: !Int64
+    , treqStatus :: !TrackStatus
     -- | Whether or not the client expects a compact response
     , treqCompact :: !Bool
     -- | The current state of this ongoing request
@@ -315,9 +329,7 @@ newTrackerRequest meta@MetaInfo {..} peerID = TrackerRequest
     metaInfoHash
     peerID
     6881
-    0
-    0
-    (totalFileSize meta)
+    (firstTrackStatus meta)
     True
     ReqStarted
     Nothing
@@ -335,9 +347,9 @@ trackerQuery TrackerRequest {..} =
         $  [ ("info_hash" , getSHA1 treqInfoHash)
            , ("peer_id"   , treqPeerID)
            , ("port"      , Relude.show treqPort)
-           , ("uploaded"  , Relude.show treqUploaded)
-           , ("downloaded", Relude.show treqDownloaded)
-           , ("left"      , Relude.show treqLeft)
+           , ("uploaded"  , Relude.show (trackUp treqStatus))
+           , ("downloaded", Relude.show (trackDown treqStatus))
+           , ("left"      , Relude.show (trackLeft treqStatus))
            , ("compact"   , if treqCompact then "1" else "0")
            ]
         ++ eventQuery
@@ -394,9 +406,9 @@ encodeUDPRequest (UDPTrackerRequest conn TrackerRequest {..}) =
         <> fromMaybe "\0\0\0\0" treqTransactionID
         <> getSHA1 treqInfoHash
         <> treqPeerID
-        <> pack64 treqDownloaded
-        <> pack64 treqLeft
-        <> pack64 treqUploaded
+        <> pack64 (trackUp treqStatus)
+        <> pack64 (trackDown treqStatus)
+        <> pack64 (trackLeft treqStatus)
         <> pack32 eventNum
     -- The IP address we hardcode (default)
         <> "\0\0\0\0"
