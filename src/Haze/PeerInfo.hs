@@ -39,7 +39,7 @@ import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , ManagerToPeer(..)
                                                 )
 import           Haze.PieceBuffer               ( PieceBuffer )
-import           Haze.Tracker                   ( Peer )
+import           Haze.Tracker                   ( Peer, TrackStatus )
 
 
 {- | A peer handle contains the information a peer shares with the rest of us.
@@ -61,6 +61,8 @@ data PeerHandle = PeerHandle
     , handleFromManager :: !(TBQueue ManagerToPeer)
     -- | The rate window for downloading
     , handleDLRate :: !(TVar RateWindow)
+    -- | The status of the download rates
+    , handleStatus :: !(TVar TrackStatus)
     -- | The peer associated with this handle
     , handlePeer :: !Peer
     }
@@ -98,6 +100,8 @@ data PeerInfo = PeerInfo
     , infoBuffer :: !(TVar PieceBuffer)
     -- | The shared message queue to the writer
     , infoToWriter :: !(TBQueue PeerToWriter)
+    -- | The information about our upload and download status
+    , infoStatus :: !(TVar TrackStatus)
     -- | A map from a Peer to specific Peer data
     , infoMap :: !(TVar (HM.HashMap Peer PeerSpecific))
     }
@@ -115,6 +119,7 @@ makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
                                                         peerFromWriter
                                                         peerFromManager
                                                         peerDLRate
+                                                        infoStatus
 
 
 -- | Add a new peer to the information we have

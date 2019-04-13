@@ -2,6 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE RecordWildCards            #-}
 {- |
 Description: Contains types and functions related to peer communication.
 -}
@@ -62,6 +63,7 @@ import           Haze.PieceBuffer               ( BlockInfo(..)
                                                 , nextBlockM
                                                 , writeBlockM
                                                 )
+import           Haze.Tracker                   (TrackStatus(..))
 
 
 -- | The messages sent between peers in a torrent
@@ -238,6 +240,22 @@ instance HasPieceBuffer PeerM where
 runPeerM :: PeerMInfo -> PeerM a -> IO a
 runPeerM r (PeerM rdr) = runReaderT rdr r
 
+-- | Increment the upload count of our Status
+incrementTrackUp :: Integral a => a -> PeerM ()
+incrementTrackUp n = do
+    status <- asks handleStatus
+    atomically $ modifyTVar' status increment
+  where
+    increment t@TrackStatus{..} = t { trackUp = trackUp + fromIntegral n}
+
+-- | Increment the download count of our Status
+incrementTrackDown :: Integral a => a -> PeerM ()
+incrementTrackDown n = do
+    status <- asks handleStatus
+    atomically $ modifyTVar' status increment
+  where
+    increment t@TrackStatus{..} = t { trackDown = trackDown + fromIntegral n}
+
 
 -- | Represents the different types of exceptions with a peer
 data PeerException
@@ -264,15 +282,17 @@ addPiece piece = do
     atomically $ modifyTVar' (pieces ! piece) (+ 1)
     modify (addLocalPiece piece)
   where
-    addLocalPiece piece ps =
+    addLocalPiece piece' ps =
         let pieces = peerPieces ps
-        in  ps { peerPieces = Set.insert piece pieces }
+        in  ps { peerPieces = Set.insert piece' pieces }
 
 -- | Send a message to the peer connection
 sendMessage :: Message -> PeerM ()
 sendMessage msg = do
     socket <- gets peerSocket
-    liftIO $ sendAll socket (encodeMessage msg)
+    let bytes = encodeMessage msg
+    incrementTrackUp (BS.length bytes)
+    liftIO $ sendAll socket bytes
 
 -- | Send a message to the writer
 sendToWriter :: PeerToWriter -> PeerM ()
@@ -409,8 +429,10 @@ recvLoop cb = do
     bytes  <- liftIO $ recv socket 1024
     dlRate <- asks handleDLRate
     now    <- liftIO getCurrentTime
-    let shiftRates = addDownload (BS.length bytes) now
+    let byteCount = BS.length bytes
+        shiftRates = addDownload byteCount now
     atomically $ modifyTVar' dlRate shiftRates
+    incrementTrackDown byteCount
     case parseMessages cb bytes of
         Nothing          -> cancel
         Just (msgs, cb') -> do
