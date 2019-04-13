@@ -218,6 +218,8 @@ newtype PeerM a = PeerM (ReaderT PeerMInfo IO a)
 
 instance MonadReader PeerHandle PeerM where
     ask = PeerM (asks peerMHandle)
+    local f (PeerM m ) = 
+        PeerM (local (\r -> r { peerMHandle = f (peerMHandle r)}) m)
 
 
 instance MonadState PeerState PeerM where
