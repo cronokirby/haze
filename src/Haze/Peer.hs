@@ -22,8 +22,7 @@ import           Control.Concurrent             ( threadDelay )
 import           Control.Concurrent.Async       ( async
                                                 , waitAnyCatchCancel
                                                 )
-import           Control.Concurrent.STM.TBQueue ( TBQueue
-                                                , readTBQueue
+import           Control.Concurrent.STM.TBQueue ( readTBQueue
                                                 , writeTBQueue
                                                 )
 import           Control.Exception.Safe         ( Exception
@@ -31,19 +30,14 @@ import           Control.Exception.Safe         ( Exception
                                                 , throw
                                                 )
 import           Data.Attoparsec.ByteString    as AP
-import           Data.Array                     ( Array
-                                                , (!)
+import           Data.Array                     ( (!)
                                                 , assocs
                                                 , bounds
                                                 )
 import qualified Data.ByteString               as BS
 import           Data.Ix                        ( inRange )
 import qualified Data.Set                      as Set
-import           Data.Time.Clock                ( UTCTime
-                                                , NominalDiffTime
-                                                , diffUTCTime
-                                                , getCurrentTime
-                                                )
+import           Data.Time.Clock                ( getCurrentTime )
 import           Network.Socket                 ( PortNumber
                                                 , Socket
                                                 )
@@ -51,10 +45,7 @@ import           Network.Socket.ByteString      ( recv
                                                 , sendAll
                                                 )
 
-import Data.RateWindow                          ( RateWindow
-                                                , emptyRateWindow
-                                                , addDownload
-                                                )                                                
+import           Data.RateWindow                ( addDownload )
 import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
                                                 , parse16
@@ -63,15 +54,14 @@ import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , ManagerToPeer(..)
                                                 , WriterToPeer(..)
                                                 )
-import           Haze.PieceBuffer               ( PieceBuffer
-                                                , BlockInfo(..)
+import           Haze.PeerInfo                  ( PeerHandle(..) )
+import           Haze.PieceBuffer               ( BlockInfo(..)
                                                 , BlockIndex(..)
                                                 , makeBlockInfo
                                                 , HasPieceBuffer(..)
                                                 , nextBlockM
                                                 , writeBlockM
                                                 )
-import Haze.Tracker (Peer)
 
 
 -- | The messages sent between peers in a torrent
@@ -217,40 +207,22 @@ sections of the code.
 -}
 data PeerMInfo = PeerMInfo
     { peerMState :: !(TVar PeerState) -- ^ The local state
-    -- | A map from piece index to piece count, used for rarity calcs
-    , peerMPieces :: !(Array Int (TVar Int))
-    {- | The pieces we currently have
-
-    The piecewriter is responsible for keeping this up to date
-    -}
-    , peerMOurPieces :: !(TVar (Set Int))
-    -- | The piece buffer shared with everyone else
-    , peerMBuffer :: !(TVar PieceBuffer)
-    -- | The out bound message queue to the piece writer
-    , peerMToWriter :: !(TBQueue PeerToWriter)
-    -- | The specific channel from the writer
-    , peerMFromWriter :: !(TBQueue WriterToPeer)
-    -- | The specific channel from the manager
-    , peerMFromManager :: !(TBQueue ManagerToPeer)
-    {- | This contains the download rate in bytes / second
-
-    This is exposed to other people mainly so that the manager can
-    choose which sockets to reciprocate downloading to, so that it can
-    tell the peers managing those to do so.
-    -}
-    , peerMDLRate :: !(TVar RateWindow)
-    -- | The peer we're connected to, identifying this process
-    , peerMMyPeer :: !Peer
+    -- | A handle to the information shared with us
+    , peerMHandle :: !PeerHandle
     }
 
 -- | Represents computations for a peer
 newtype PeerM a = PeerM (ReaderT PeerMInfo IO a)
         deriving (Functor, Applicative, Monad,
-                  MonadReader PeerMInfo, MonadIO, MonadThrow)
+                  MonadIO, MonadThrow)
+
+instance MonadReader PeerHandle PeerM where
+    ask = PeerM (asks peerMHandle)
+
 
 instance MonadState PeerState PeerM where
     state f = do
-        stRef <- asks peerMState
+        stRef <- PeerM (asks peerMState)
         atomically $ do
             st <- readTVar stRef
             let (a, st') = f st
@@ -258,7 +230,7 @@ instance MonadState PeerState PeerM where
             return a
 
 instance HasPieceBuffer PeerM where
-    getPieceBuffer = asks peerMBuffer
+    getPieceBuffer = asks handleBuffer
 
 -- | Run a peer computation given the initial information it needs
 runPeerM :: PeerMInfo -> PeerM a -> IO a
@@ -285,7 +257,7 @@ cancel = throw PeerMistakeException
 -- | Add a piece locally, and increment it's global count.
 addPiece :: Int -> PeerM ()
 addPiece piece = do
-    pieces <- asks peerMPieces
+    pieces <- asks handlePieces
     unless (inRange (bounds pieces) piece) cancel
     atomically $ modifyTVar' (pieces ! piece) (+ 1)
     modify (addLocalPiece piece)
@@ -303,7 +275,7 @@ sendMessage msg = do
 -- | Send a message to the writer
 sendToWriter :: PeerToWriter -> PeerM ()
 sendToWriter msg = do
-    q <- asks peerMToWriter
+    q <- asks handleToWriter
     atomically $ writeTBQueue q msg
 
 
@@ -327,7 +299,7 @@ reactToMessage msg = case msg of
                 (False, Nothing) -> request next
                 (_    , _      ) -> return ()
     Request info -> do
-        me <- asks peerMMyPeer
+        me <- asks handlePeer
         unlessM (gets peerAmChoking) (sendToWriter (PieceRequest me info))
     RecvBlock index bytes -> do
         writeBlockM index bytes
@@ -355,7 +327,7 @@ reactToWriter msg = case msg of
 -- | Loop and react to messages sent by the writer
 writerLoop :: PeerM ()
 writerLoop = forever $ do
-    chan <- asks peerMFromWriter
+    chan <- asks handleFromWriter
     msg  <- atomically $ readTBQueue chan
     reactToWriter msg
 
@@ -369,7 +341,7 @@ reactToManager PeerIsWorthy = do
 -- | A loop handling messages from the manager
 managerLoop :: PeerM ()
 managerLoop = forever $ do
-    chan <- asks peerMFromManager
+    chan <- asks handleFromManager
     msg  <- atomically $ readTBQueue chan
     reactToManager msg
 
@@ -378,8 +350,8 @@ managerLoop = forever $ do
 getRarestPiece :: PeerM (Maybe Int)
 getRarestPiece = do
     theirPieces <- gets peerPieces
-    ourPieces   <- asks peerMOurPieces >>= readTVarIO
-    pieceArr    <- asks peerMPieces
+    ourPieces   <- asks handleOurPieces >>= readTVarIO
+    pieceArr    <- asks handlePieces
     let wantedPiece (i, _) =
             Set.member i (Set.difference theirPieces ourPieces)
     counts <- traverse getCount $ filter wantedPiece (assocs pieceArr)
@@ -433,7 +405,7 @@ recvLoop :: ParseCallBack -> PeerM ()
 recvLoop cb = do
     socket <- gets peerSocket
     bytes  <- liftIO $ recv socket 1024
-    dlRate <- asks peerMDLRate
+    dlRate <- asks handleDLRate
     now    <- liftIO getCurrentTime
     let shiftRates = addDownload (BS.length bytes) now
     atomically $ modifyTVar' dlRate shiftRates
@@ -453,7 +425,7 @@ and one waiting to kill the connection if it gets stale.
 -}
 startPeer :: PeerM ()
 startPeer = do
-    r <- ask
+    r <- PeerM ask
     let startAsync = liftIO . async . runPeerM r
     checkAlive <- startAsync checkKeepAliveLoop
     stayAlive <- startAsync sendKeepAliveLoop
