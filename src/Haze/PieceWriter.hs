@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RecordWildCards            #-}
 {- |
 Description: Contains functions centered around writing pieces to disk
 
@@ -65,6 +66,7 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
 import           Haze.Tracker                   ( FileInfo(..)
                                                 , FileItem(..)
                                                 , SHAPieces(..)
+                                                , TrackStatus(..)
                                                 , totalFileLength
                                                 )
 
@@ -112,7 +114,7 @@ makeFileStructure (PieceMapping m) =
     let locations = join (elems m)
         files     = nub $ map extractEmbedded locations
         deps      = map (\f -> (f, mapMaybe (getDep f) locations)) files
-        splits = locationsToSplit <$> m
+        splits    = locationsToSplit <$> m
     in  FileStructure splits deps
   where
     extractEmbedded :: PieceLocation -> AbsFile
@@ -144,8 +146,8 @@ writePieces (FileStructure splitPieces deps) pieces = do
         NormalPiece filePath -> writeFileBS (Path.fromAbsFile filePath) bytes
         SplitPieces splits ->
             let go (bs, action) (size, file) =
-                    let (start, end) = BS.splitAt size bs
-                    in  (end, action *> writeAbsFile file start)
+                        let (start, end) = BS.splitAt size bs
+                        in  (end, action *> writeAbsFile file start)
             in  snd $ foldl' go (bytes, pure ()) splits
     forM_ deps (uncurry appendWhenAllExist)
   where
@@ -306,7 +308,8 @@ data PieceWriterInfo = PieceWriterInfo
 We need the peer information, as well as the necessary information
 to construct the plans for saving pieces.
 -}
-makePieceWriterInfo :: PeerInfo -> FileInfo -> SHAPieces -> AbsDir -> PieceWriterInfo
+makePieceWriterInfo
+    :: PeerInfo -> FileInfo -> SHAPieces -> AbsDir -> PieceWriterInfo
 makePieceWriterInfo info fileInfo shaPieces root =
     let mapping   = makeMapping fileInfo shaPieces root
         structure = makeFileStructure mapping
@@ -332,6 +335,15 @@ writePiecesM = do
     pieces <- saveCompletePiecesM
     info   <- asks pieceStructure
     writePieces info pieces
+    forM_ pieces $ sendWriterToAll . PieceAcquired . fst
+    let savedCount = sum $ map (BS.length . snd) pieces
+    status <- infoStatus <$> getPeerInfo
+    atomically $ modifyTVar' status (updateLeft savedCount)
+  where
+    -- Since we never save a piece twice, this should stay >= 0
+    updateLeft saved t@TrackStatus {..} =
+        t { trackLeft = trackLeft - fromIntegral saved }
+
 
 pieceWriterLoop :: PieceWriterM ()
 pieceWriterLoop = forever $ do
