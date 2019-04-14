@@ -206,8 +206,8 @@ launchAnnouncer = do
                     , "tracker" .= tracker
                     , "msg" .= "No response after 1s"
                     ]
-                ScoutReturned       res -> whenM (handleAnnounceRes res) settle
-                ScoutUnknownTracker t   -> log
+                ScoutReturned res -> whenM (handleAnnounceRes res) settle
+                ScoutUnknownTracker t -> log
                     Debug
                     [ "source" .= "announcer"
                     , "tracker" .= tracker
@@ -215,7 +215,7 @@ launchAnnouncer = do
                     ]
     handleAnnounceRes :: AnnounceResult -> AnnouncerM Bool
     handleAnnounceRes res = case res of
-        BadAnnounce err -> do
+        BadAnnounce  err  -> do
             log Error ["source" .= "announcer", "error" .= err]
             return False
         RealAnnounce info -> reportAnnounceInfo info $> True

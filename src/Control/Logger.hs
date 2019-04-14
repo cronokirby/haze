@@ -55,8 +55,8 @@ instance Ord Event where
 
 
 infixr 8 .=
-(.=) :: (Show k, Show v) => k -> v -> (Text, Text)
-a .= b = (show a, show b)
+(.=) :: Show v => Text -> v -> (Text, Text)
+a .= b = (a, show b)
 
 
 -- | The information a logger needs
@@ -84,7 +84,7 @@ loggerLoop = forever $ do
     makeLog :: LoggerInfo -> Event -> Text
     makeLog info (Event i time pairs) =
         let sep        = loggerISep info
-            eventTexts = map (\(a, b) -> a <> " = " <> b) pairs
+            eventTexts = map (\(a, b) -> a <> ": " <> b) pairs
             realTime   = if loggerITime info then " " <> show time else ""
             header     = mconcat ["[", show i, realTime, "]"]
         in  Text.intercalate sep (header : eventTexts) <> "\n"
