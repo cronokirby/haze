@@ -44,6 +44,12 @@ import           Network.Socket.ByteString      ( sendAllTo
                                                 , recv
                                                 )
 
+import           Control.Logger                 ( LoggerHandle
+                                                , HasLogger(..)
+                                                , Importance(..)
+                                                , (.=)
+                                                , log
+                                                )
 import           Data.TieredList                ( TieredList
                                                 , popTiered
                                                 )
@@ -119,6 +125,8 @@ data AnnouncerInfo = AnnouncerInfo
     , announcerResults :: !(TBQueue AnnounceInfo)
     -- | We just hold on to this to pass on to scouts
     , announcerStatus :: !(TVar TrackStatus)
+    -- | The handle to be able to log things
+    , announcerLogH :: !LoggerHandle
     -- | An 'MVar' is sufficient to receive 'AnnounceInfo' from our scout
     , announcerMsg :: !(MVar AnnounceResult)
     {- | This holds a list of Trackers we want to try and connect to.
@@ -134,9 +142,10 @@ makeAnnouncerInfo
     => MetaInfo
     -> TVar TrackStatus
     -> TBQueue AnnounceInfo
+    -> LoggerHandle
     -> m AnnouncerInfo
-makeAnnouncerInfo torrent status results =
-    AnnouncerInfo torrent results status <$> newEmptyMVar <*> trackers
+makeAnnouncerInfo torrent status results logH =
+    AnnouncerInfo torrent results status logH <$> newEmptyMVar <*> trackers
     where trackers = newIORef (squashedTrackers torrent)
 
 -- | Represents the context for an announcer
@@ -144,6 +153,9 @@ newtype AnnouncerM a = AnnouncerM (ReaderT AnnouncerInfo IO a)
     deriving ( Functor, Applicative, Monad
              , MonadReader AnnouncerInfo, MonadIO
              )
+
+instance HasLogger AnnouncerM where
+    getLogger = asks announcerLogH
 
 -- | Run the context for an announcer
 runAnnouncerM :: AnnouncerM a -> AnnouncerInfo -> IO a
@@ -188,13 +200,24 @@ launchAnnouncer = do
         ($ next) . maybe noTrackers $ \tracker -> do
             r <- tryTracker connInfo tracker
             case r of
-                ScoutTimedOut     -> putTextLn "No response after 1s"
-                ScoutReturned res -> whenM (handleAnnounceRes res) settle
-                ScoutUnknownTracker t ->
-                    putTextLn ("Skipping unknown tracker " <> t)
+                ScoutTimedOut -> log
+                    Debug
+                    [ "source" .= "announcer"
+                    , "tracker" .= tracker
+                    , "msg" .= "No response after 1s"
+                    ]
+                ScoutReturned       res -> whenM (handleAnnounceRes res) settle
+                ScoutUnknownTracker t   -> log
+                    Debug
+                    [ "source" .= "announcer"
+                    , "tracker" .= tracker
+                    , "unkown-protocol" .= t
+                    ]
     handleAnnounceRes :: AnnounceResult -> AnnouncerM Bool
     handleAnnounceRes res = case res of
-        BadAnnounce  err  -> print err $> False
+        BadAnnounce err -> do
+            log Error ["source" .= "announcer", "error" .= err]
+            return False
         RealAnnounce info -> reportAnnounceInfo info $> True
     settle :: AnnouncerM ()
     settle = do
@@ -203,7 +226,7 @@ launchAnnouncer = do
         whenM (handleAnnounceRes res) settle
     tryTracker :: ConnInfo -> Tracker -> AnnouncerM ScoutResult
     tryTracker connInfo tracker = do
-        putTextLn ("Trying: " <> show tracker)
+        log Info ["source" .= "announcer", "new-tracker" .= tracker]
         case tracker of
             HTTPTracker url ->
                 connectHTTP url & runConnWith connInfo & launchConn
@@ -213,8 +236,9 @@ launchAnnouncer = do
                     & Sock.withSocketsDo
                     & launchConn
             UnknownTracker t -> return (ScoutUnknownTracker t)
-    noTrackers :: MonadIO m => m ()
-    noTrackers = putTextLn "No more trackers left to try :("
+    noTrackers :: AnnouncerM ()
+    noTrackers =
+        log Error ["source" .= "announcer", "msg" .= "No trackers left to try"]
     launchConn :: IO () -> AnnouncerM ScoutResult
     launchConn action = do
         void . liftIO $ async action

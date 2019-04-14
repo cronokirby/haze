@@ -12,7 +12,8 @@ module Control.Logger
     , LoggerConfig(..)
     , defaultLoggerConfig
     , startLogger
-    , HasLogger
+    , LoggerHandle
+    , HasLogger(..)
     , log
     )
 where
@@ -78,12 +79,12 @@ loggerLoop :: LoggerM ()
 loggerLoop = forever $ do
     info  <- ask
     event <- atomically $ readTBQueue (loggerIEvents info)
-    putTextLn (makeLog info event)
+    putText (makeLog info event)
   where
     makeLog :: LoggerInfo -> Event -> Text
     makeLog info (Event i time pairs) =
         let sep        = loggerISep info
-            eventTexts = map (\(a, b) -> a <> "=" <> b) pairs
+            eventTexts = map (\(a, b) -> a <> " = " <> b) pairs
             realTime   = if loggerITime info then " " <> show time else ""
             header     = mconcat ["[", show i, realTime, "]"]
         in  Text.intercalate sep (header : eventTexts) <> "\n"
@@ -100,7 +101,7 @@ data LoggerConfig = LoggerConfig
 
 -- | A default value for the logger configuration
 defaultLoggerConfig :: LoggerConfig
-defaultLoggerConfig = LoggerConfig "," True 1024
+defaultLoggerConfig = LoggerConfig ", " True 1024
 
 {- | Start a logger with a given config
 

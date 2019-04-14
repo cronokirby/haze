@@ -33,6 +33,7 @@ library
                        Haze.PieceBuffer
                        Haze.PieceWriter
                        Haze.Tracker
+                       Control.Logger
                        Data.RateWindow
                        Data.TieredList
   ghc-options:         -Wall
