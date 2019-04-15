@@ -161,6 +161,10 @@ instance HasLogger AnnouncerM where
 runAnnouncerM :: AnnouncerM a -> AnnouncerInfo -> IO a
 runAnnouncerM (AnnouncerM m) = runReaderT m
 
+-- | Log something with the source set as the announcer
+logAnnouncer :: Importance -> [(Text, Text)] -> AnnouncerM ()
+logAnnouncer i pairs = log i ("source" .= ("announcer" :: String) : pairs)
+
 -- | Report a successful announce back
 reportAnnounceInfo :: AnnounceInfo -> AnnouncerM ()
 reportAnnounceInfo info = do
@@ -200,23 +204,21 @@ launchAnnouncer = do
         ($ next) . maybe noTrackers $ \tracker -> do
             r <- tryTracker connInfo tracker
             case r of
-                ScoutTimedOut -> log
+                ScoutTimedOut -> logAnnouncer
                     Debug
-                    [ "source" .= "announcer"
-                    , "tracker" .= tracker
-                    , "msg" .= "No response after 1s"
+                    [ "tracker" .= tracker
+                    , "msg" .= ("No response after 1s" :: String)
                     ]
                 ScoutReturned res -> whenM (handleAnnounceRes res) settle
-                ScoutUnknownTracker t -> log
+                ScoutUnknownTracker t -> logAnnouncer
                     Debug
-                    [ "source" .= "announcer"
-                    , "tracker" .= tracker
+                    [ "tracker" .= tracker
                     , "unkown-protocol" .= t
                     ]
     handleAnnounceRes :: AnnounceResult -> AnnouncerM Bool
     handleAnnounceRes res = case res of
         BadAnnounce  err  -> do
-            log Error ["source" .= "announcer", "error" .= err]
+            logAnnouncer Error ["error" .= err]
             return False
         RealAnnounce info -> reportAnnounceInfo info $> True
     settle :: AnnouncerM ()
@@ -226,7 +228,7 @@ launchAnnouncer = do
         whenM (handleAnnounceRes res) settle
     tryTracker :: ConnInfo -> Tracker -> AnnouncerM ScoutResult
     tryTracker connInfo tracker = do
-        log Info ["source" .= "announcer", "new-tracker" .= tracker]
+        logAnnouncer Info ["new-tracker" .= tracker]
         case tracker of
             HTTPTracker url ->
                 connectHTTP url & runConnWith connInfo & launchConn
@@ -238,7 +240,7 @@ launchAnnouncer = do
             UnknownTracker t -> return (ScoutUnknownTracker t)
     noTrackers :: AnnouncerM ()
     noTrackers =
-        log Error ["source" .= "announcer", "msg" .= "No trackers left to try"]
+        logAnnouncer Error ["msg" .= ("No trackers left to try" :: String)]
     launchConn :: IO () -> AnnouncerM ScoutResult
     launchConn action = do
         void . liftIO $ async action
