@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RecordWildCards            #-}
 {- | 
 Description: contains functionality for starting the main client
 
@@ -13,13 +15,23 @@ import           Relude
 
 import           Control.Concurrent.Async       ( Async
                                                 , async
+                                                , cancel
                                                 , waitAnyCatchCancel
                                                 )
-import           Control.Concurrent.STM.TBQueue ( newTBQueueIO
+import           Control.Concurrent.STM.TBQueue ( TBQueue
+                                                , newTBQueueIO
                                                 , readTBQueue
                                                 )
+import           Control.Exception.Safe         ( finally )
+import           Path                           ( Path
+                                                , Abs
+                                                , Dir
+                                                )
 
-import           Control.Logger                 ( defaultLoggerConfig
+import qualified Path.IO                       as Path
+
+import           Control.Logger                 ( LoggerHandle
+                                                , defaultLoggerConfig
                                                 , startLogger
                                                 )
 import           Haze.Announcer                 ( makeAnnouncerInfo
@@ -27,12 +39,49 @@ import           Haze.Announcer                 ( makeAnnouncerInfo
                                                 , launchAnnouncer
                                                 )
 import           Haze.Bencoding                 ( DecodeError(..) )
-import           Haze.Tracker                   ( MetaInfo
+import           Haze.PeerInfo                  ( PeerInfo(..)
+                                                , makeEmptyPeerInfo
+                                                )
+import           Haze.PieceWriter               ( makePieceWriterInfo
+                                                , runPieceWriterM
+                                                , pieceWriterLoop
+                                                )
+import           Haze.Tracker                   ( AnnounceInfo
+                                                , MetaInfo(..)
                                                 , metaFromBytes
-                                                , firstTrackStatus
                                                 )
 
+-- | Represents all the information a client needs for orchestration
+data ClientInfo = ClientInfo
+    { clientPeerInfo :: !PeerInfo
+    -- | The torrent file for this client
+    , clientMeta :: !MetaInfo
+    -- | The root we're using to save files
+    , clientRoot :: !(Path Abs Dir)
+    -- | The queue along which announce information is transmitted
+    , clientAnnouncerResults :: !(TBQueue AnnounceInfo)
+    -- | The logging handle
+    , clientLogger :: !LoggerHandle
+    }
 
+-- | Make client information given a torrent file
+makeClientInfo :: MonadIO m => MetaInfo -> LoggerHandle -> m ClientInfo
+makeClientInfo clientMeta clientLogger = do
+    clientPeerInfo         <- makeEmptyPeerInfo clientMeta
+    clientRoot             <- Path.getCurrentDir
+    clientAnnouncerResults <- liftIO $ newTBQueueIO 16
+    return ClientInfo { .. }
+
+-- | Represents a context with access to client information
+newtype ClientM a = ClientM (ReaderT ClientInfo IO a)
+    deriving (Functor, Applicative, Monad,
+              MonadReader ClientInfo, MonadIO)
+
+-- | Run a client's computation
+runClientM :: ClientM a -> ClientInfo -> IO a
+runClientM (ClientM m) = runReaderT m
+
+-- | Launch a client given a file path from which to start
 launchClient :: FilePath -> IO ()
 launchClient file = do
     bytes <- readFileBS file
@@ -41,21 +90,44 @@ launchClient file = do
             putStrLn "Failed to decode file:"
             putTextLn err
         Right meta -> do
-            pids     <- startAll meta
-            (_, err) <- waitAnyCatchCancel pids
-            putStrLn "Unexpected component crash: "
-            print err
+            (pid, logger) <- startLogger defaultLoggerConfig
+            clientInfo    <- makeClientInfo meta logger
+            runClientM startClient clientInfo `finally` cancel pid
+
+startClient :: ClientM ()
+startClient = do
+    pids     <- startAll
+    (_, err) <- liftIO $ waitAnyCatchCancel pids
+    putStrLn "Unexpected component crash: "
+    print err
+
 
 -- | Start all the sub components
-startAll :: MetaInfo -> IO [Async ()]
-startAll meta = do
-    (logPID, logH) <- startLogger defaultLoggerConfig
-    q              <- newTBQueueIO 16
-    v              <- newTVarIO (firstTrackStatus meta)
-    info           <- makeAnnouncerInfo meta v q logH
-    announcerPID   <- async $ runAnnouncerM launchAnnouncer info
-    printerPID     <- async . forever $ do
-        ann <- atomically $ readTBQueue q
-        print ann
-    return [logPID, announcerPID, printerPID]
+startAll :: ClientM [Async ()]
+startAll = sequence [startAnnouncer, startPrinter, startPieceWriter]
+  where
+    asyncio = liftIO . async
+    startAnnouncer :: ClientM (Async ())
+    startAnnouncer = do
+        meta   <- asks clientMeta
+        status <- asks (infoStatus . clientPeerInfo)
+        q      <- asks clientAnnouncerResults
+        logH   <- asks clientLogger
+        info   <- makeAnnouncerInfo meta status q logH
+        asyncio $ runAnnouncerM launchAnnouncer info
+    startPrinter :: ClientM (Async ())
+    startPrinter = do
+        q <- asks clientAnnouncerResults
+        asyncio . forever $ do
+            ann <- atomically $ readTBQueue q
+            print ann
+    startPieceWriter :: ClientM (Async ())
+    startPieceWriter = do
+        peerInfo <- asks clientPeerInfo
+        fileInfo <- asks (metaFile . clientMeta)
+        sha      <- asks (metaPieces . clientMeta)
+        root     <- asks clientRoot
+        let pwInfo = makePieceWriterInfo peerInfo fileInfo sha root
+        asyncio $ runPieceWriterM pieceWriterLoop pwInfo
+
 

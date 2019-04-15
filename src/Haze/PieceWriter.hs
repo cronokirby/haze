@@ -19,6 +19,11 @@ module Haze.PieceWriter
     , CompleteLocation(..)
     , EmbeddedLocation(..)
     , makeMapping
+    , PieceWriterInfo
+    , PieceWriterM
+    , makePieceWriterInfo
+    , runPieceWriterM
+    , pieceWriterLoop
     )
 where
 
@@ -326,8 +331,8 @@ instance HasPieceBuffer PieceWriterM where
     getPieceBuffer = asks (infoBuffer . peerInfo)
 
 -- | Run a piece writer function given the right context
-runPieceWriterM :: PieceWriterInfo -> PieceWriterM a -> IO a
-runPieceWriterM info (PieceWriterM r) = runReaderT r info
+runPieceWriterM :: PieceWriterM a -> PieceWriterInfo -> IO a
+runPieceWriterM (PieceWriterM r) = runReaderT r
 
 -- | Lookup and write the pieces in a pieceBuff
 writePiecesM :: PieceWriterM ()

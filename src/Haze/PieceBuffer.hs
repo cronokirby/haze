@@ -16,6 +16,7 @@ module Haze.PieceBuffer
     , PieceBuffer
     , makePieceBuffer
     , sizedPieceBuffer
+    , bufferArr
     , nextBlock
     , writeBlock
     , saveCompletePieces
@@ -160,6 +161,14 @@ sizedPieceBuffer totalSize shaPieces@(SHAPieces pieceSize _) blockSize =
         let (d, m) = divMod total size
             append = if m == 0 then [] else [m]
         in  replicate (fromIntegral d) size ++ append
+
+{- | Given a piece buffer, get a map with the same pieces
+
+This is useful to reuse the work done in the piece buffer to
+make a map from each piece.
+-}
+bufferArr :: PieceBuffer -> Array Int ()
+bufferArr (PieceBuffer _ _ arr) = arr $> ()
 
 {- | Construct a piece buffer given a block size and a torrent file
 
