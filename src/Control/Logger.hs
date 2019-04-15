@@ -20,7 +20,9 @@ where
 
 import           Relude
 
-import           Control.Concurrent.Async       ( async )
+import           Control.Concurrent.Async       ( Async
+                                                , async
+                                                )
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , newTBQueueIO
                                                 , readTBQueue
@@ -107,13 +109,13 @@ defaultLoggerConfig = LoggerConfig ", " True 1024
 
 This will launch the logger in a thread that will die if the surrounding one does.
 -}
-startLogger :: LoggerConfig -> IO LoggerHandle
+startLogger :: LoggerConfig -> IO (Async (), LoggerHandle)
 startLogger LoggerConfig {..} = do
     q <- newTBQueueIO (fromIntegral loggerBufSize)
     let info           = LoggerInfo q loggerSep loggerTime
         (LoggerM loop) = loggerLoop
-    void . async $ runReaderT loop info
-    return (LoggerHandle q)
+    pid <- async $ runReaderT loop info
+    return (pid, LoggerHandle q)
 
 
 -- | A handle allowing us to send messages to a logger
