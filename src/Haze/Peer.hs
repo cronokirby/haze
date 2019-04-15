@@ -55,7 +55,8 @@ import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , ManagerToPeer(..)
                                                 , WriterToPeer(..)
                                                 )
-import           Haze.PeerInfo                  ( PeerHandle(..) )
+import           Haze.PeerInfo                  ( PeerHandle(..), PeerFriendship(..) )
+
 import           Haze.PieceBuffer               ( BlockInfo(..)
                                                 , BlockIndex(..)
                                                 , makeBlockInfo
@@ -173,15 +174,7 @@ parseMessages callback bytes = do
 
 -- | Represents the state of p2p communication
 data PeerState = PeerState
-    { peerIsChoking :: !Bool -- ^ We're being choked by the peer
-    -- | The peer is interested in us
-    , peerIsInterested :: !Bool
-    -- | We are choking the peer
-    , peerAmChoking :: !Bool
-    -- | We're interested in the peer 
-    , peerAmInterested :: !Bool
-    -- | The set of pieces this peer has
-    , peerPieces :: !(Set Int)
+    { peerPieces :: !(Set Int) -- | The set of pieces this peer has
     {- | What piece we might have already requested
 
     We choose to download pieces reactively, so we need to know
@@ -199,7 +192,7 @@ data PeerState = PeerState
 -- | The peer state at the start of communication
 initialPeerState :: Socket -> PeerState
 initialPeerState =
-    PeerState True False True False Set.empty Nothing Set.empty True
+    PeerState Set.empty Nothing Set.empty True
 
 
 {- | The information needed in a peer computation
@@ -256,6 +249,16 @@ incrementTrackDown n = do
   where
     increment t@TrackStatus{..} = t { trackDown = trackDown + fromIntegral n}
 
+-- | Modify our friendship atomically
+modifyFriendship :: (PeerFriendship -> PeerFriendship) -> PeerM ()
+modifyFriendship f = do
+    friendShip <- asks handleFriendship
+    atomically (modifyTVar' friendShip f)
+
+-- | Get some information about our friendship
+askFriendship :: (PeerFriendship -> a) -> PeerM a
+askFriendship f = f <$> (asks handleFriendship >>= readTVarIO)
+
 
 -- | Represents the different types of exceptions with a peer
 data PeerException
@@ -305,24 +308,25 @@ sendToWriter msg = do
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = case msg of
     KeepAlive -> modify (\ps -> ps { peerKeepAlive = True })
-    Choke     -> modify (\ps -> ps { peerIsChoking = True })
+    Choke     -> modifyFriendship (\f -> f { peerIsChoking = True })
     UnChoke   -> do
-        modify (\ps -> ps { peerIsChoking = False })
+        modifyFriendship (\f -> f { peerIsChoking = False })
         requestRarestPiece
-    Interested   -> modify (\ps -> ps { peerIsInterested = True })
-    UnInterested -> modify (\ps -> ps { peerIsInterested = False })
+    Interested   -> modifyFriendship (\f -> f { peerIsInterested = True })
+    UnInterested -> modifyFriendship (\f -> f { peerIsInterested = False })
     Have piece   -> do
         addPiece piece
         whenJustM getRarestPiece $ \next -> do
             sendMessage Interested
             requested <- gets peerRequested
-            choking   <- gets peerIsChoking
+            choking   <- askFriendship peerIsChoking
             case (choking, requested) of
                 (False, Nothing) -> request next
                 (_    , _      ) -> return ()
     Request info -> do
         me <- asks handlePeer
-        unlessM (gets peerAmChoking) (sendToWriter (PieceRequest me info))
+        let amChoking = askFriendship peerAmChoking
+        unlessM amChoking (sendToWriter (PieceRequest me info))
     RecvBlock index bytes -> do
         writeBlockM index bytes
         sendToWriter PieceBufferWritten
@@ -343,7 +347,7 @@ reactToWriter msg = case msg of
     PieceAcquired piece -> do
         sendMessage (Have piece)
         requested <- gets peerRequested
-        choking   <- gets peerIsChoking
+        choking   <- askFriendship peerIsChoking
         when (not choking && isNothing requested) requestRarestPiece
 
 -- | Loop and react to messages sent by the writer
@@ -357,7 +361,7 @@ writerLoop = forever $ do
 -- | React to messages sent from the manager
 reactToManager :: ManagerToPeer -> PeerM ()
 reactToManager PeerIsWorthy = do
-    modify (\ps -> ps { peerAmChoking = False })
+    modifyFriendship (\f -> f { peerAmChoking = False })
     sendMessage UnChoke
 
 -- | A loop handling messages from the manager

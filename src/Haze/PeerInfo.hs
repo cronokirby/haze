@@ -11,7 +11,8 @@ We also want to keep track of certain statistics about the peers,
 such as their current download rate, and the sets of pieces they have.
 -}
 module Haze.PeerInfo
-    ( PeerHandle(..)
+    ( PeerFriendship(..)
+    , PeerHandle(..)
     , PeerInfo(..)
     , makeEmptyPeerInfo
     , HasPeerInfo(..)
@@ -51,6 +52,31 @@ import           Haze.Tracker                   ( MetaInfo
                                                 )
 
 
+{- | Holds information on our relationship with a peer
+
+This needs to be exposed in order to make decisions on which peers
+to unchoke based on whether or not they are interested in what we have.
+-}
+data PeerFriendship = PeerFriendship
+    { peerIsChoking :: !Bool -- | Whether or not they are choking us
+    -- | Whether or not I am choking them
+    , peerAmChoking :: !Bool
+    -- | Whether or not the peer is interested in me
+    , peerIsInterested :: !Bool
+    -- | Whether or not we're interested in them
+    , peerAmInterested :: !Bool
+    }
+
+{- | The default state for our friendship
+
+At the beginning of our relationship with the peer, neither us nor
+them are interested in anything the other has to offer, and neither
+of us are letting the other download anything.
+-}
+emptyFriendship :: PeerFriendship
+emptyFriendship = PeerFriendship True True False False
+
+
 {- | A peer handle contains the information a peer shares with the rest of us.
 
 After adding a peer to the map, we return this handle so they can share
@@ -68,6 +94,8 @@ data PeerHandle = PeerHandle
     , handleFromWriter :: !(TBQueue WriterToPeer)
     -- | The specific channel from the manager
     , handleFromManager :: !(TBQueue ManagerToPeer)
+    -- | The relationship with that peer
+    , handleFriendship :: !(TVar PeerFriendship)
     -- | The rate window for downloading
     , handleDLRate :: !(TVar RateWindow)
     -- | The status of the download rates
@@ -86,6 +114,8 @@ data PeerSpecific = PeerSpecific
     { peerFromWriter :: !(TBQueue WriterToPeer) -- ^ a queue from the writer
     -- | A queue to allow the manager to send us messages
     , peerFromManager :: !(TBQueue ManagerToPeer)
+    -- | The friendship for our peer
+    , peerFriendship :: !(TVar PeerFriendship)
     -- | The download rate window for this peer
     , peerDLRate :: !(TVar RateWindow)
     }
@@ -93,7 +123,11 @@ data PeerSpecific = PeerSpecific
 -- | Create a new empty struct of PeerSpecific Data
 makePeerSpecific :: MonadIO m => m PeerSpecific
 makePeerSpecific =
-    PeerSpecific <$> mkQueue <*> mkQueue <*> newTVarIO emptyRateWindow
+    PeerSpecific
+        <$> mkQueue
+        <*> mkQueue
+        <*> newTVarIO emptyFriendship
+        <*> newTVarIO emptyRateWindow
     where mkQueue = liftIO (newTBQueueIO 256)
 
 {- | This holds general information about the operation of the peers.
@@ -140,9 +174,9 @@ makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
                                                         infoToWriter
                                                         peerFromWriter
                                                         peerFromManager
+                                                        peerFriendship
                                                         peerDLRate
                                                         infoStatus
-
 
 -- | Add a new peer to the information we have
 addPeer :: MonadIO m => Peer -> PeerInfo -> m PeerHandle
