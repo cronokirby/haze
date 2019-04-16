@@ -14,10 +14,12 @@ where
 import           Relude
 
 import           Control.Concurrent.STM.TBQueue ( writeTBQueue )
+import           Data.List                      ( (!!) )
 import           Data.Maybe                     ( fromJust )
 import qualified Data.HashMap.Strict           as HM
 import qualified Data.HashSet                  as HS
 import           Data.Time.Clock                ( getCurrentTime )
+import           System.Random                  ( randomRIO )
 
 import           Data.RateWindow                ( RateWindow
                                                 , getRate
@@ -49,9 +51,28 @@ newtype SelectorM a = SelectorM (ReaderT SelectorInfo IO a)
               MonadReader SelectorInfo, MonadIO)
 
 
+extractRate :: MonadIO m => TVar RateWindow -> m Double
+extractRate var = do
+    now <- liftIO getCurrentTime
+    atomically $ do
+        val <- readTVar var
+        let (newVal, rate) = getRate now 10 val
+        newVal `seq` writeTVar var newVal
+        return rate
+
+sendToPeer :: HM.HashMap Peer PeerSpecific -> SelectorToPeer -> Peer -> STM ()
+sendToPeer mp msg peer = do
+    let q = peerFromSelector . fromJust $ HM.lookup peer mp
+    writeTBQueue q msg
+
 {- | This will select 4 peers to unchoke.
 
 This should be run every 10 seconds or so.
+
+This chooses the 4 peers that are interested in us, and have the best
+downloaded rates, and then notifies those peers of unchoking.
+We also watch peers with a better download rate than these 4, and
+if they become interested, we boot our lowest of the 4 peers.
 -}
 selectPeers :: SelectorM ()
 selectPeers = do
@@ -77,17 +98,64 @@ selectPeers = do
         writeTVar uninterested newWatched
         forM_ newDownloaders (sendToPeer peerMap PeerUnchoke)
         forM_ newWatched     (sendToPeer peerMap PeerWatchForInterest)
+
+
+
+{- | Select a new peer to unchoke optimistically.
+
+Once that peer becomes interested, we kick our lowest performing downloader.
+
+This new peer is chosen at random among the peers that we haven't alread
+unchoked, or started watching.
+
+This should be called every 3rd select round, in addition to the normal
+selection process.
+-}
+selectOptimistically :: SelectorM ()
+selectOptimistically = do
+    dldrs   <- readTVarIO =<< asks selectorDownloaders
+    watched <- readTVarIO =<< asks selectorUninterested
+    peerMap <- readTVarIO =<< asks (infoMap . selectorPeerInfo)
+    let allPeers = HS.fromList $ HM.keys peerMap
+        toSelect = HS.difference allPeers (HS.union dldrs watched)
+    chosen <- chooseRandom toSelect
+    newDownloader chosen
   where
-    sendToPeer
-        :: HM.HashMap Peer PeerSpecific -> SelectorToPeer -> Peer -> STM ()
-    sendToPeer mp msg peer = do
-        let q = peerFromSelector . fromJust $ HM.lookup peer mp
-        writeTBQueue q msg
-    extractRate :: MonadIO m => TVar RateWindow -> m Double
-    extractRate var = do
-        now <- liftIO getCurrentTime
-        atomically $ do
-            val <- readTVar var
-            let (newVal, rate) = getRate now 10 val
-            newVal `seq` writeTVar var newVal
-            return rate
+    chooseRandom :: MonadIO m => HS.HashSet a -> m a
+    chooseRandom set = do
+        let size = HS.size set
+        r <- liftIO $ randomRIO (0, size - 1)
+        return (HS.toList set !! r)
+
+{- | Replace the worst downloader with a new peer.
+
+This is useful when a previously selected peer
+becomes interested. In that case, we want to replace our
+worst downloader with it.
+-}
+newDownloader :: Peer -> SelectorM ()
+newDownloader peer = do
+    peerMap     <- readTVarIO =<< asks (infoMap . selectorPeerInfo)
+    dldrsVar    <- asks selectorDownloaders
+    downloaders <- readTVarIO dldrsVar
+    watchedVar  <- asks selectorUninterested
+    watched     <- readTVarIO watchedVar
+    if HS.size downloaders < 4
+        then do
+            let newDownloaders = HS.insert peer downloaders
+                newWatched     = HS.delete peer watched
+            atomically $ do
+                writeTVar dldrsVar   newDownloaders
+                writeTVar watchedVar newWatched
+        else do
+            rates <- forM (HS.toList downloaders) $ \pr -> do
+                let spec = fromJust $ HM.lookup peer peerMap
+                rate <- extractRate (peerDLRate spec)
+                return (pr, rate)
+            let worst = fst . fromJust . viaNonEmpty head $ sortOn snd rates
+                newDownloaders = downloaders & HS.delete worst & HS.insert peer
+                newWatched = HS.delete peer watched
+            atomically $ do
+                sendToPeer peerMap PeerChoke worst
+                writeTVar dldrsVar   newDownloaders
+                writeTVar watchedVar newWatched
