@@ -16,6 +16,7 @@ import           Relude
 import           Control.Concurrent.STM.TBQueue ( writeTBQueue )
 import           Data.Maybe                     ( fromJust )
 import qualified Data.HashMap.Strict           as HM
+import qualified Data.HashSet                  as HS
 import           Data.Time.Clock                ( getCurrentTime )
 
 import           Data.RateWindow                ( RateWindow
@@ -25,16 +26,26 @@ import           Haze.Messaging                 ( ManagerToPeer(..) )
 import           Haze.PeerInfo                  ( PeerInfo(..)
                                                 , PeerSpecific(..)
                                                 )
+import           Haze.Tracker                   ( Peer )
+
 
 -- | The information a Selector needs
-newtype SelectorInfo = SelectorInfo
-    { selectorPeerInfo :: PeerInfo -- | Information on peers
+data SelectorInfo = SelectorInfo
+    { selectorPeerInfo :: !PeerInfo -- | Information on peers
+    -- | The set of peers we've chosen to download to
+    , selectorDownloaders :: !(HS.HashSet Peer)
+    {- | The set of peers we'd like to download from us
+
+    A peer can join this set either because it was chosen
+    at randomly optimistically, or because it had a better
+    download rate.
+    -}
+    , selectorUninterested :: !(HS.HashSet Peer)
     }
 
 newtype SelectorM a = SelectorM (ReaderT SelectorInfo IO a)
     deriving (Functor, Applicative, Monad,
               MonadReader SelectorInfo, MonadIO)
-
 
 
 {- | This will select 4 peers to unchoke.
