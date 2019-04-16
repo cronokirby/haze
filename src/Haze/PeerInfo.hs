@@ -13,6 +13,7 @@ such as their current download rate, and the sets of pieces they have.
 module Haze.PeerInfo
     ( PeerFriendship(..)
     , PeerHandle(..)
+    , PeerSpecific (..)
     , PeerInfo(..)
     , makeEmptyPeerInfo
     , HasPeerInfo(..)
