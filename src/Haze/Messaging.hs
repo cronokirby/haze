@@ -7,6 +7,7 @@ and to let us have an abstract specification of the adequate behavior.
 module Haze.Messaging 
     ( PeerToWriter(..)
     , SelectorToPeer(..)
+    , PeerToSelector(..)
     , WriterToPeer(..)
     )
 where
@@ -34,7 +35,7 @@ data WriterToPeer
     -- | A new piece has just been saved
     | PieceAcquired !Int
 
--- | Messages sent from the manager to a peer
+-- | Messages sent from the selector to a peer
 data SelectorToPeer
     -- | The peer should unchoke
     = PeerUnchoke
@@ -42,3 +43,11 @@ data SelectorToPeer
     | PeerChoke
     -- | The peer should watch for interest, and then notify
     | PeerWatchForInterest
+
+{- | Messages sent from a peer to the selector
+
+The main purpose of these messages is to tell the selector
+that a watched peer has become interested in downloading
+from us.
+-}
+newtype PeerToSelector = PeerBecameInterested Peer

@@ -13,7 +13,7 @@ such as their current download rate, and the sets of pieces they have.
 module Haze.PeerInfo
     ( PeerFriendship(..)
     , PeerHandle(..)
-    , PeerSpecific (..)
+    , PeerSpecific(..)
     , PeerInfo(..)
     , makeEmptyPeerInfo
     , HasPeerInfo(..)
@@ -40,6 +40,7 @@ import           Data.RateWindow                ( RateWindow
                                                 )
 import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , WriterToPeer(..)
+                                                , PeerToSelector(..)
                                                 , SelectorToPeer(..)
                                                 )
 import           Haze.PieceBuffer               ( PieceBuffer
@@ -95,6 +96,8 @@ data PeerHandle = PeerHandle
     , handleFromWriter :: !(TBQueue WriterToPeer)
     -- | The specific channel from the selector
     , handleFromSelector :: !(TBQueue SelectorToPeer)
+    -- | The specific channel to the selector
+    , handleToSelector :: !(TBQueue PeerToSelector)
     -- | The relationship with that peer
     , handleFriendship :: !(TVar PeerFriendship)
     -- | The rate window for downloading
@@ -144,6 +147,8 @@ data PeerInfo = PeerInfo
     , infoBuffer :: !(TVar PieceBuffer)
     -- | The shared message queue to the writer
     , infoToWriter :: !(TBQueue PeerToWriter)
+    -- | The shared message queue to the selector
+    , infoToSelector :: !(TBQueue PeerToSelector)
     -- | The information about our upload and download status
     , infoStatus :: !(TVar TrackStatus)
     -- | A map from a Peer to specific Peer data
@@ -155,12 +160,13 @@ makeEmptyPeerInfo :: MonadIO m => MetaInfo -> m PeerInfo
 makeEmptyPeerInfo meta = do
     let buffer = makePieceBuffer 0x4000 meta
         makeCountVar _ = newTVarIO (0 :: Int)
-    infoPieces    <- traverse makeCountVar $ bufferArr buffer
-    infoOurPieces <- newTVarIO Set.empty
-    infoBuffer    <- newTVarIO buffer
-    infoToWriter  <- liftIO $ newTBQueueIO 1024
-    infoStatus    <- newTVarIO (firstTrackStatus meta)
-    infoMap       <- newTVarIO HM.empty
+    infoPieces     <- traverse makeCountVar $ bufferArr buffer
+    infoOurPieces  <- newTVarIO Set.empty
+    infoBuffer     <- newTVarIO buffer
+    infoToWriter   <- liftIO $ newTBQueueIO 1024
+    infoToSelector <- liftIO $ newTBQueueIO 1024
+    infoStatus     <- newTVarIO (firstTrackStatus meta)
+    infoMap        <- newTVarIO HM.empty
     return PeerInfo { .. }
 
 -- | Represents a class of contexts in which we have access to pieceinfo
@@ -175,6 +181,7 @@ makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
                                                         infoToWriter
                                                         peerFromWriter
                                                         peerFromSelector
+                                                        infoToSelector
                                                         peerFriendship
                                                         peerDLRate
                                                         infoStatus

@@ -53,9 +53,12 @@ import           Haze.Bits                      ( encodeIntegralN
                                                 )
 import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , SelectorToPeer(..)
+                                                , PeerToSelector(..)
                                                 , WriterToPeer(..)
                                                 )
-import           Haze.PeerInfo                  ( PeerHandle(..), PeerFriendship(..) )
+import           Haze.PeerInfo                  ( PeerHandle(..)
+                                                , PeerFriendship(..)
+                                                )
 
 import           Haze.PieceBuffer               ( BlockInfo(..)
                                                 , BlockIndex(..)
@@ -185,6 +188,8 @@ data PeerState = PeerState
     , peerShouldCancel :: !(Set BlockIndex)
     -- | Used to cancel if no messages are received
     , peerKeepAlive :: !Bool
+    -- | Used to remember to notify the selector if our peer becomes interested
+    , peerWatched :: !Bool
     -- | The socket connection for this peer
     , peerSocket :: !Socket
     }
@@ -192,7 +197,7 @@ data PeerState = PeerState
 -- | The peer state at the start of communication
 initialPeerState :: Socket -> PeerState
 initialPeerState =
-    PeerState Set.empty Nothing Set.empty True
+    PeerState Set.empty Nothing Set.empty True False
 
 
 {- | The information needed in a peer computation
@@ -312,7 +317,13 @@ reactToMessage msg = case msg of
     UnChoke   -> do
         modifyFriendship (\f -> f { peerIsChoking = False })
         requestRarestPiece
-    Interested   -> modifyFriendship (\f -> f { peerIsInterested = True })
+    Interested   -> do
+        modifyFriendship (\f -> f { peerIsInterested = True })
+        whenM (gets peerWatched) $ do
+            modify (\ps -> ps { peerWatched = False })
+            thisPeer <- asks handlePeer
+            q        <- asks handleToSelector
+            atomically $ writeTBQueue q (PeerBecameInterested thisPeer)
     UnInterested -> modifyFriendship (\f -> f { peerIsInterested = False })
     Have piece   -> do
         addPiece piece
@@ -367,7 +378,7 @@ reactToSelector m = case m of
     PeerUnchoke -> do
         modifyFriendship (\f -> f { peerAmChoking = False })
         sendMessage UnChoke
-    PeerWatchForInterest -> return ()
+    PeerWatchForInterest -> modify (\ps -> ps { peerWatched = True })
 
 -- | A loop handling messages from the manager
 selectorLoop :: PeerM ()

@@ -61,7 +61,7 @@ selectPeers = do
     let bestPeers = take 4 . map fst $ sortBy (flip compare `on` snd) peerRates
     atomically . forM_ bestPeers $ \peer -> do
         let spec = fromJust $ HM.lookup peer peerMap
-        writeTBQueue (peerFromManager spec) PeerUnchoke
+        writeTBQueue (peerFromSelector spec) PeerUnchoke
   where
     extractRate :: MonadIO m => TVar RateWindow -> m Double
     extractRate var = do
