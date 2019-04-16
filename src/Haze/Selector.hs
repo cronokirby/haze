@@ -1,4 +1,5 @@
 {-# LANGUAGE  GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE  NumericUnderscores         #-}
 {- |
 Description: contains the component that chokes and unchokes peers
 
@@ -8,12 +9,21 @@ we shouldn't. It's necessary to have a single component
 responsible for making these decisions.
 -}
 module Haze.Selector
-    ()
+    ( SelectorInfo
+    , makeSelectorInfo
+    , SelectorM
+    , runSelectorM
+    , selectorLoop
+    )
 where
 
 import           Relude
 
-import           Control.Concurrent.STM.TBQueue ( writeTBQueue )
+import           Control.Concurrent             ( threadDelay )
+import           Control.Concurrent.Async       ( withAsync )
+import           Control.Concurrent.STM.TBQueue ( readTBQueue
+                                                , writeTBQueue
+                                                )
 import           Data.List                      ( (!!) )
 import           Data.Maybe                     ( fromJust )
 import qualified Data.HashMap.Strict           as HM
@@ -24,7 +34,9 @@ import           System.Random                  ( randomRIO )
 import           Data.RateWindow                ( RateWindow
                                                 , getRate
                                                 )
-import           Haze.Messaging                 ( SelectorToPeer(..) )
+import           Haze.Messaging                 ( PeerToSelector(..)
+                                                , SelectorToPeer(..)
+                                                )
 import           Haze.PeerInfo                  ( PeerInfo(..)
                                                 , PeerSpecific(..)
                                                 , PeerFriendship(..)
@@ -46,10 +58,45 @@ data SelectorInfo = SelectorInfo
     , selectorUninterested :: !(TVar (HS.HashSet Peer))
     }
 
+-- | Construct the information a Selector needs
+makeSelectorInfo :: MonadIO m => PeerInfo -> m SelectorInfo
+makeSelectorInfo peerInfo =
+    SelectorInfo peerInfo <$> newTVarIO HS.empty <*> newTVarIO HS.empty
+
 newtype SelectorM a = SelectorM (ReaderT SelectorInfo IO a)
     deriving (Functor, Applicative, Monad,
               MonadReader SelectorInfo, MonadIO)
 
+-- | Run a selector computation given the right information
+runSelectorM :: SelectorM a -> SelectorInfo -> IO a
+runSelectorM (SelectorM m) = runReaderT m
+
+{- | This starts the selector process
+
+This will select new peers every 10 seconds, optimistically
+select a new peer every 30, and listen to message any time.
+-}
+selectorLoop :: SelectorM ()
+selectorLoop = do
+    info <- ask
+    let peerAction   = runSelectorM fromPeerLoop info
+        selectAction = runSelectorM (selectLoop 0) info
+    liftIO $ withAsync peerAction (const selectAction)
+  where
+    fromPeerLoop :: SelectorM ()
+    fromPeerLoop = forever $ do
+        q   <- asks (infoToSelector . selectorPeerInfo)
+        msg <- atomically $ readTBQueue q
+        reactToPeer msg
+    selectLoop :: Int -> SelectorM ()
+    selectLoop n = do
+        liftIO $ threadDelay 10_000_000
+        selectPeers
+        if n == 2
+            then do
+                selectOptimistically
+                selectLoop 0
+            else selectLoop (n + 1)
 
 extractRate :: MonadIO m => TVar RateWindow -> m Double
 extractRate var = do
@@ -64,6 +111,7 @@ sendToPeer :: HM.HashMap Peer PeerSpecific -> SelectorToPeer -> Peer -> STM ()
 sendToPeer mp msg peer = do
     let q = peerFromSelector . fromJust $ HM.lookup peer mp
     writeTBQueue q msg
+
 
 {- | This will select 4 peers to unchoke.
 
@@ -100,7 +148,6 @@ selectPeers = do
         forM_ newWatched     (sendToPeer peerMap PeerWatchForInterest)
 
 
-
 {- | Select a new peer to unchoke optimistically.
 
 Once that peer becomes interested, we kick our lowest performing downloader.
@@ -126,6 +173,10 @@ selectOptimistically = do
         let size = HS.size set
         r <- liftIO $ randomRIO (0, size - 1)
         return (HS.toList set !! r)
+
+-- | Handle a peer's message to us
+reactToPeer :: PeerToSelector -> SelectorM ()
+reactToPeer (PeerBecameInterested peer) = newDownloader peer
 
 {- | Replace the worst downloader with a new peer.
 

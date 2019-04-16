@@ -46,6 +46,10 @@ import           Haze.PieceWriter               ( makePieceWriterInfo
                                                 , runPieceWriterM
                                                 , pieceWriterLoop
                                                 )
+import           Haze.Selector                  ( makeSelectorInfo
+                                                , runSelectorM
+                                                , selectorLoop
+                                                )
 import           Haze.Tracker                   ( AnnounceInfo
                                                 , MetaInfo(..)
                                                 , metaFromBytes
@@ -104,7 +108,8 @@ startClient = do
 
 -- | Start all the sub components
 startAll :: ClientM [Async ()]
-startAll = sequence [startAnnouncer, startPrinter, startPieceWriter]
+startAll = sequence
+    [startAnnouncer, startPrinter, startPieceWriter, startSelector]
   where
     asyncio = liftIO . async
     startAnnouncer :: ClientM (Async ())
@@ -129,5 +134,8 @@ startAll = sequence [startAnnouncer, startPrinter, startPieceWriter]
         root     <- asks clientRoot
         let pwInfo = makePieceWriterInfo peerInfo fileInfo sha root
         asyncio $ runPieceWriterM pieceWriterLoop pwInfo
-
-
+    startSelector :: ClientM (Async ())
+    startSelector = do
+        peerInfo <- asks clientPeerInfo
+        selInfo  <- makeSelectorInfo peerInfo
+        asyncio $ runSelectorM selectorLoop selInfo
