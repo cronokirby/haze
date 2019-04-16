@@ -52,7 +52,7 @@ import           Haze.Bits                      ( encodeIntegralN
                                                 , parse16
                                                 )
 import           Haze.Messaging                 ( PeerToWriter(..)
-                                                , ManagerToPeer(..)
+                                                , SelectorToPeer(..)
                                                 , WriterToPeer(..)
                                                 )
 import           Haze.PeerInfo                  ( PeerHandle(..), PeerFriendship(..) )
@@ -359,17 +359,22 @@ writerLoop = forever $ do
 
 
 -- | React to messages sent from the manager
-reactToManager :: ManagerToPeer -> PeerM ()
-reactToManager PeerIsWorthy = do
-    modifyFriendship (\f -> f { peerAmChoking = False })
-    sendMessage UnChoke
+reactToSelector :: SelectorToPeer -> PeerM ()
+reactToSelector m = case m of
+    PeerChoke -> do
+        modifyFriendship (\f -> f { peerAmChoking = True })
+        sendMessage Choke
+    PeerUnchoke -> do
+        modifyFriendship (\f -> f { peerAmChoking = False })
+        sendMessage UnChoke
+    PeerWatchForInterest -> return ()
 
 -- | A loop handling messages from the manager
-managerLoop :: PeerM ()
-managerLoop = forever $ do
-    chan <- asks handleFromManager
+selectorLoop :: PeerM ()
+selectorLoop = forever $ do
+    chan <- asks handleFromSelector
     msg  <- atomically $ readTBQueue chan
-    reactToManager msg
+    reactToSelector msg
 
 
 -- | Get the rarest piece that the peer claims to have, and that we don't
@@ -448,7 +453,7 @@ recvLoop cb = do
 
 This will start and wait on 5 processes, one waiting on the socket,
 one keeping the socket alive by sending heartbeats,
-one waiting to receive from the piecewriter, one from the manager,
+one waiting to receive from the piecewriter, one from the selector,
 and one waiting to kill the connection if it gets stale.
 -}
 startPeer :: PeerM ()
@@ -458,7 +463,7 @@ startPeer = do
     checkAlive <- startAsync checkKeepAliveLoop
     stayAlive <- startAsync sendKeepAliveLoop
     socket    <- startAsync (recvLoop firstParseCallBack)
-    manager   <- startAsync managerLoop
+    selector   <- startAsync selectorLoop
     writer    <- startAsync writerLoop
     void . liftIO $ waitAnyCatchCancel 
-        [checkAlive, stayAlive, socket, manager, writer]
+        [checkAlive, stayAlive, socket, selector, writer]

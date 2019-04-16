@@ -22,7 +22,7 @@ import           Data.Time.Clock                ( getCurrentTime )
 import           Data.RateWindow                ( RateWindow
                                                 , getRate
                                                 )
-import           Haze.Messaging                 ( ManagerToPeer(..) )
+import           Haze.Messaging                 ( SelectorToPeer(..) )
 import           Haze.PeerInfo                  ( PeerInfo(..)
                                                 , PeerSpecific(..)
                                                 )
@@ -61,7 +61,7 @@ selectPeers = do
     let bestPeers = take 4 . map fst $ sortBy (flip compare `on` snd) peerRates
     atomically . forM_ bestPeers $ \peer -> do
         let spec = fromJust $ HM.lookup peer peerMap
-        writeTBQueue (peerFromManager spec) PeerIsWorthy
+        writeTBQueue (peerFromManager spec) PeerUnchoke
   where
     extractRate :: MonadIO m => TVar RateWindow -> m Double
     extractRate var = do

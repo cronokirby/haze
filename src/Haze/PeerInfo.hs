@@ -40,7 +40,7 @@ import           Data.RateWindow                ( RateWindow
                                                 )
 import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , WriterToPeer(..)
-                                                , ManagerToPeer(..)
+                                                , SelectorToPeer(..)
                                                 )
 import           Haze.PieceBuffer               ( PieceBuffer
                                                 , bufferArr
@@ -93,8 +93,8 @@ data PeerHandle = PeerHandle
     , handleToWriter :: !(TBQueue PeerToWriter)
     -- | The specific channel from the writer
     , handleFromWriter :: !(TBQueue WriterToPeer)
-    -- | The specific channel from the manager
-    , handleFromManager :: !(TBQueue ManagerToPeer)
+    -- | The specific channel from the selector
+    , handleFromSelector :: !(TBQueue SelectorToPeer)
     -- | The relationship with that peer
     , handleFriendship :: !(TVar PeerFriendship)
     -- | The rate window for downloading
@@ -113,8 +113,8 @@ To handle this, we have this struct for specific information
 -}
 data PeerSpecific = PeerSpecific
     { peerFromWriter :: !(TBQueue WriterToPeer) -- ^ a queue from the writer
-    -- | A queue to allow the manager to send us messages
-    , peerFromManager :: !(TBQueue ManagerToPeer)
+    -- | A queue to allow the selector to send us messages
+    , peerFromSelector :: !(TBQueue SelectorToPeer)
     -- | The friendship for our peer
     , peerFriendship :: !(TVar PeerFriendship)
     -- | The download rate window for this peer
@@ -174,7 +174,7 @@ makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
                                                         infoBuffer
                                                         infoToWriter
                                                         peerFromWriter
-                                                        peerFromManager
+                                                        peerFromSelector
                                                         peerFriendship
                                                         peerDLRate
                                                         infoStatus

@@ -6,7 +6,7 @@ and to let us have an abstract specification of the adequate behavior.
 -}
 module Haze.Messaging 
     ( PeerToWriter(..)
-    , ManagerToPeer(..)
+    , SelectorToPeer(..)
     , WriterToPeer(..)
     )
 where
@@ -35,6 +35,10 @@ data WriterToPeer
     | PieceAcquired !Int
 
 -- | Messages sent from the manager to a peer
-data ManagerToPeer
-    -- | The peer should start reciprocating requests
-    = PeerIsWorthy
+data SelectorToPeer
+    -- | The peer should unchoke
+    = PeerUnchoke
+    -- | The peer should choke
+    | PeerChoke
+    -- | The peer should watch for interest, and then notify
+    | PeerWatchForInterest
