@@ -85,21 +85,6 @@ getSeconds :: MonadIO m => m DiffTime
 getSeconds = liftIO $ utctDayTime <$> getCurrentTime
 
 
-{- | Generates a peer id from scratch.
-
-Note that this should be generated before the first interaction with
-a tracker, and not at every interaction with the tracker.
-
-Uses the Azureus style id, with HZ as the prefix, and then appends
-a UTC timestamp, before then taking only the first 20 bytes.
--}
-generatePeerID :: MonadIO m => m ByteString
-generatePeerID = liftIO $ do
-    secs <- getSeconds
-    let whole = "-HZ010-" <> show secs
-        cut   = BS.take 20 whole
-    return cut
-
 -- | Represents an error that can interrupt interaction with a Tracker
 data AnnounceError
     -- | We couldn't parse a tracker's response

@@ -39,6 +39,10 @@ import           Haze.Announcer                 ( makeAnnouncerInfo
                                                 , launchAnnouncer
                                                 )
 import           Haze.Bencoding                 ( DecodeError(..) )
+import           Haze.Gateway                   ( makeGatewayInfo
+                                                , runGatewayM
+                                                , gatewayLoop
+                                                )
 import           Haze.PeerInfo                  ( PeerInfo(..)
                                                 , makeEmptyPeerInfo
                                                 )
@@ -109,7 +113,7 @@ startClient = do
 -- | Start all the sub components
 startAll :: ClientM [Async ()]
 startAll = sequence
-    [startAnnouncer, startPrinter, startPieceWriter, startSelector]
+    [startAnnouncer, startPrinter, startPieceWriter, startSelector, startGateway]
   where
     asyncio = liftIO . async
     startAnnouncer :: ClientM (Async ())
@@ -140,3 +144,9 @@ startAll = sequence
         peerInfo <- asks clientPeerInfo
         selInfo  <- makeSelectorInfo peerInfo
         asyncio $ runSelectorM selectorLoop selInfo
+    startGateway :: ClientM (Async ())
+    startGateway = do
+        peerInfo <- asks clientPeerInfo
+        announces <- asks clientAnnouncerResults
+        let gateInfo = makeGatewayInfo peerInfo announces
+        asyncio $ runGatewayM gatewayLoop gateInfo

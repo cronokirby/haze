@@ -27,6 +27,7 @@ library
                        Haze.Bencoding
                        Haze.Bits
                        Haze.Client
+                       Haze.Gateway
                        Haze.Messaging
                        Haze.Peer
                        Haze.PeerInfo
