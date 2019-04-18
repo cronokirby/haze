@@ -113,7 +113,12 @@ startClient = do
 -- | Start all the sub components
 startAll :: ClientM [Async ()]
 startAll = sequence
-    [startAnnouncer, startPrinter, startPieceWriter, startSelector, startGateway]
+    [ startAnnouncer
+    , startPrinter
+    , startPieceWriter
+    , startSelector
+    , startGateway
+    ]
   where
     asyncio = liftIO . async
     startAnnouncer :: ClientM (Async ())
@@ -146,7 +151,7 @@ startAll = sequence
         asyncio $ runSelectorM selectorLoop selInfo
     startGateway :: ClientM (Async ())
     startGateway = do
-        peerInfo <- asks clientPeerInfo
+        peerInfo  <- asks clientPeerInfo
         announces <- asks clientAnnouncerResults
-        let gateInfo = makeGatewayInfo peerInfo announces
+        gateInfo  <- makeGatewayInfo peerInfo announces
         asyncio $ runGatewayM gatewayLoop gateInfo
