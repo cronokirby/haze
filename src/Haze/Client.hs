@@ -115,10 +115,11 @@ startAll = sequence
     startAnnouncer :: ClientM (Async ())
     startAnnouncer = do
         meta   <- asks clientMeta
+        peerID <- asks (infoPeerID . clientPeerInfo)
         status <- asks (infoStatus . clientPeerInfo)
         q      <- asks clientAnnouncerResults
         logH   <- asks clientLogger
-        info   <- makeAnnouncerInfo meta status q logH
+        info   <- makeAnnouncerInfo meta peerID status q logH
         asyncio $ runAnnouncerM launchAnnouncer info
     startPrinter :: ClientM (Async ())
     startPrinter = do

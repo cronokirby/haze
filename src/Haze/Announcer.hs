@@ -54,6 +54,9 @@ import           Data.TieredList                ( TieredList
                                                 , popTiered
                                                 )
 import           Haze.Bencoding                 ( DecodeError(..) )
+import           Haze.PeerInfo                  ( PeerID
+                                                , peerIDBytes
+                                                )
 import           Haze.Tracker                   ( Announce(..)
                                                 , AnnounceInfo(..)
                                                 , MetaInfo(..)
@@ -123,6 +126,8 @@ data AnnouncerInfo = AnnouncerInfo
     { announcerTorrent :: !MetaInfo
     -- | This allows us to report back successful announces
     , announcerResults :: !(TBQueue AnnounceInfo)
+    -- | The peer id we have
+    , announcerPeerID :: !PeerID
     -- | We just hold on to this to pass on to scouts
     , announcerStatus :: !(TVar TrackStatus)
     -- | The handle to be able to log things
@@ -140,12 +145,15 @@ data AnnouncerInfo = AnnouncerInfo
 makeAnnouncerInfo
     :: MonadIO m
     => MetaInfo
+    -> PeerID
     -> TVar TrackStatus
     -> TBQueue AnnounceInfo
     -> LoggerHandle
     -> m AnnouncerInfo
-makeAnnouncerInfo torrent status results logH =
-    AnnouncerInfo torrent results status logH <$> newEmptyMVar <*> trackers
+makeAnnouncerInfo torrent peerID status results logH =
+    AnnouncerInfo torrent results peerID status logH
+        <$> newEmptyMVar
+        <*> trackers
     where trackers = newIORef (squashedTrackers torrent)
 
 -- | Represents the context for an announcer
@@ -193,9 +201,9 @@ data ScoutResult
 
 launchAnnouncer :: AnnouncerM ()
 launchAnnouncer = do
-    peerID             <- generatePeerID
     AnnouncerInfo {..} <- ask
-    let connInfo =
+    let peerID = announcerPeerID
+        connInfo =
             ConnInfo peerID announcerTorrent announcerMsg announcerStatus
     scoutTrackers connInfo
   where
@@ -209,15 +217,13 @@ launchAnnouncer = do
                     [ "tracker" .= tracker
                     , "msg" .= ("No response after 1s" :: String)
                     ]
-                ScoutReturned res -> whenM (handleAnnounceRes res) settle
-                ScoutUnknownTracker t -> logAnnouncer
+                ScoutReturned       res -> whenM (handleAnnounceRes res) settle
+                ScoutUnknownTracker t   -> logAnnouncer
                     Debug
-                    [ "tracker" .= tracker
-                    , "unkown-protocol" .= t
-                    ]
+                    ["tracker" .= tracker, "unkown-protocol" .= t]
     handleAnnounceRes :: AnnounceResult -> AnnouncerM Bool
     handleAnnounceRes res = case res of
-        BadAnnounce  err  -> do
+        BadAnnounce err -> do
             logAnnouncer Error ["error" .= err]
             return False
         RealAnnounce info -> reportAnnounceInfo info $> True
@@ -257,7 +263,7 @@ launchAnnouncer = do
 
 -- | The information a connection to a tracker needs
 data ConnInfo = ConnInfo
-    { connPeerID :: !ByteString
+    { connPeerID :: !PeerID
     , connTorrent :: !MetaInfo
     , connMsg :: !(MVar AnnounceResult)
     -- | This is treated as read only
@@ -298,7 +304,7 @@ connectHTTP url = do
     ConnInfo {..} <- ask
     mgr           <- liftIO $ newManager defaultManagerSettings
     request       <- liftIO $ parseRequest (toString url)
-    loop mgr request (newTrackerRequest connTorrent connPeerID)
+    loop mgr request (newTrackerRequest connTorrent (peerIDBytes connPeerID))
   where
     loop mgr req trackerReq = do
         let query     = trackerQuery trackerReq
@@ -349,7 +355,7 @@ connectUDP url' prt' =
         loop udp newReq connTime
     connect :: UDPSocket -> ConnM UDPConnection
     connect udp = do
-        peerID <- asks connPeerID
+        peerID <- peerIDBytes <$> asks connPeerID
         let magicBytes =
                 "\0\0\4\x17\x27\x10\x19\x80" <> "\0\0\0\0" <> BS.drop 16 peerID
         sendUDP udp magicBytes
@@ -358,7 +364,7 @@ connectUDP url' prt' =
     makeUDPRequest :: UDPConnection -> ConnM UDPTrackerRequest
     makeUDPRequest conn = do
         ConnInfo {..} <- ask
-        return (newUDPRequest connTorrent connPeerID conn)
+        return (newUDPRequest connTorrent (peerIDBytes connPeerID) conn)
     getAnnounce :: UDPSocket -> UDPTrackerRequest -> ConnM AnnounceInfo
     getAnnounce udp request = do
         sendUDP udp (encodeUDPRequest request)
