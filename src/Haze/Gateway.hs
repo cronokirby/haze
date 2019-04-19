@@ -18,7 +18,8 @@ where
 import           Relude
 
 import           Control.Concurrent             ( forkIO )
-import Control.Concurrent.Async (withAsync)
+import           Control.Concurrent.Async       ( withAsync )
+import           Control.Concurrent.STM         ( retry )
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , readTBQueue
                                                 )
@@ -26,6 +27,7 @@ import           Control.Exception.Safe         ( MonadThrow
                                                 , MonadCatch
                                                 , MonadMask
                                                 , bracket
+                                                , finally
                                                 )
 import           Control.Monad.Random           ( MonadRandom )
 import qualified Data.Attoparsec.ByteString    as AP
@@ -144,6 +146,16 @@ instance HasPeerInfo GatewayM where
 runGatewayM :: GatewayM a -> GatewayInfo -> IO a
 runGatewayM (GatewayM m) = runReaderT m
 
+{- | This is intended to be run no matter what at the end of a peer's cycle
+
+This will close the socket connection provided, and decrement the amount
+of active connections.
+-}
+cleanupConnection :: TCP.Socket -> GatewayM ()
+cleanupConnection sock = do
+    TCP.closeSock sock
+    connections <- asks gatewayConnections
+    atomically $ modifyTVar' connections (\x -> x - 1)
 {- | Initiate a handshake given an intermediate computation
 
 When we're connecting, we send our header before this function,
@@ -180,12 +192,19 @@ doHandshake peer client sock = void . runMaybeT $ do
 
 -- | Start the loop that listens for new passive connections
 listenLoop :: GatewayM ()
-listenLoop = do
+listenLoop = TCP.listen TCP.HostAny "6881" $ \(mySock, _) -> forever $ do
+    connections <- asks gatewayConnections
+    atomically $ do
+        current <- readTVar connections
+        if current >= maxPassiveConnections
+            then retry
+            else writeTVar connections (current + 1)
     allInfo <- ask
-    liftIO $ TCP.serve TCP.HostAny "6881" (\a -> runGatewayM (inner a) allInfo)
+    TCP.acceptFork mySock (\h -> runGatewayM (accept h) allInfo)
   where
-    inner (sock, sockAddr) = do
-        print sockAddr
+    accept handle@(sock, _) =
+        handshakeWith handle `finally` cleanupConnection sock
+    handshakeWith (sock, sockAddr) = do
         peer <- getPeer sock sockAddr
         doHandshake peer False sock
     getPeer :: MonadIO m => TCP.Socket -> TCP.SockAddr -> m Peer
@@ -231,13 +250,8 @@ announceLoop = forever $ do
         forM_ chosen $ \peer ->
             liftIO . void . forkIO $ runGatewayM (connect peer) context
     connect :: Peer -> GatewayM ()
-    connect peer = bracket (connectToPeer peer) cleanup $ doHandshake peer True
-      where
-        cleanup :: TCP.Socket -> GatewayM ()
-        cleanup sock = do
-            TCP.closeSock sock
-            connections <- asks gatewayConnections
-            atomically $ modifyTVar' connections (\x -> x - 1)
+    connect peer = bracket (connectToPeer peer) cleanupConnection
+        $ doHandshake peer True
 
 
 {- | Initiate a connection to a peer
