@@ -18,6 +18,7 @@ where
 import           Relude
 
 import           Control.Concurrent             ( forkIO )
+import Control.Concurrent.Async (withAsync)
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , readTBQueue
                                                 )
@@ -30,6 +31,7 @@ import           Control.Monad.Random           ( MonadRandom )
 import qualified Data.Attoparsec.ByteString    as AP
 import qualified Data.ByteString               as BS
 import qualified Data.HashMap.Strict           as HM
+import qualified Network.Socket                as Net
 import qualified Network.Simple.TCP            as TCP
 import           System.Random.Shuffle          ( shuffleM )
 
@@ -142,9 +144,73 @@ instance HasPeerInfo GatewayM where
 runGatewayM :: GatewayM a -> GatewayInfo -> IO a
 runGatewayM (GatewayM m) = runReaderT m
 
+{- | Initiate a handshake given an intermediate computation
+
+When we're connecting, we send our header before this function,
+and our peer id inside. When accepting, we send our header inside.
+-}
+doHandshake :: Peer -> Bool -> TCP.Socket -> GatewayM ()
+doHandshake peer client sock = void . runMaybeT $ do
+    when client sendHeader
+    (shake, left) <- MaybeT $ parseRecv (AP.parse parseHandshake) sock
+    let theirHash = handshakeHash shake
+    ourHash <- asks (metaInfoHash . gatewayMeta)
+    when (theirHash /= ourHash) (fail "")
+    if client then sendPeerID else sendHeader
+    theirID <- case AP.parse parsePeerID left of
+        AP.Fail{}     -> fail ""
+        AP.Partial cb -> fmap fst . MaybeT $ parseRecv cb sock
+        AP.Done _ r   -> return r
+    unless (maybe True (== theirID) (peerID peer)) (fail "")
+    unless client sendPeerID
+    let peerWithId = peer { peerID = Just theirID }
+    handle    <- MaybeT . fmap Just $ addPeer peerWithId
+    peerMInfo <- makePeerMInfo sock handle
+    liftIO $ runPeerM startPeer peerMInfo
+  where
+    sendHeader :: MaybeT GatewayM ()
+    sendHeader = lift $ do
+        hash <- asks (metaInfoHash . gatewayMeta)
+        TCP.send sock (handshakeBytes (HandshakeStart hash))
+    sendPeerID :: MaybeT GatewayM ()
+    sendPeerID = lift $ do
+        ourID <- asks (infoPeerID . gatewayPeerInfo)
+        TCP.send sock (peerIDBytes ourID)
+
+
+-- | Start the loop that listens for new passive connections
+listenLoop :: GatewayM ()
+listenLoop = do
+    allInfo <- ask
+    liftIO $ TCP.serve TCP.HostAny "6881" (\a -> runGatewayM (inner a) allInfo)
+  where
+    inner (sock, sockAddr) = do
+        print sockAddr
+        peer <- getPeer sock sockAddr
+        doHandshake peer False sock
+    getPeer :: MonadIO m => TCP.Socket -> TCP.SockAddr -> m Peer
+    getPeer sock sockAddr = do
+        let peerID = Nothing
+        peerPort  <- liftIO $ Net.socketPort sock
+        (host, _) <- liftIO $ getNameInfo sockAddr
+        -- the host should always resolve
+        let peerHost = fromMaybe (error "Unresolved host") host
+        return Peer { .. }
+    getNameInfo = Net.getNameInfo [Net.NI_NUMERICHOST] True False
+
+
 -- | Start the gateway loop
 gatewayLoop :: GatewayM ()
-gatewayLoop = forever $ do
+gatewayLoop = do
+    allInfo <- ask
+    let announce = runGatewayM announceLoop allInfo
+        listen   = runGatewayM listenLoop allInfo
+    liftIO (withAsync announce (const listen))
+
+
+-- | Start the loop connecting to new peers after announces
+announceLoop :: GatewayM ()
+announceLoop = forever $ do
     q       <- asks gatewayAnnounces
     annInfo <- atomically $ readTBQueue q
     handleAnnounce annInfo
@@ -165,23 +231,7 @@ gatewayLoop = forever $ do
         forM_ chosen $ \peer ->
             liftIO . void . forkIO $ runGatewayM (connect peer) context
     connect :: Peer -> GatewayM ()
-    connect peer = bracket (connectToPeer peer) cleanup $ \sock -> do
-        hash <- asks (metaInfoHash . gatewayMeta)
-        TCP.send sock (handshakeBytes (HandshakeStart hash))
-        void . runMaybeT $ do
-            (shake, left) <- MaybeT $ parseRecv (AP.parse parseHandshake) sock
-            let theirHash = handshakeHash shake
-            when (theirHash /= hash) (fail "")
-            ourID <- asks (infoPeerID . gatewayPeerInfo)
-            TCP.send sock (peerIDBytes ourID)
-            theirID <- case AP.parse parsePeerID left of
-                AP.Fail{}     -> fail ""
-                AP.Partial cb -> fmap fst . MaybeT $ parseRecv cb sock
-                AP.Done _ r   -> return r
-            when (Just theirID /= peerID peer) (fail "")
-            handle    <- MaybeT . fmap Just $ addPeer peer
-            peerMInfo <- makePeerMInfo sock handle
-            liftIO $ runPeerM startPeer peerMInfo
+    connect peer = bracket (connectToPeer peer) cleanup $ doHandshake peer True
       where
         cleanup :: TCP.Socket -> GatewayM ()
         cleanup sock = do
