@@ -54,12 +54,10 @@ import           Data.TieredList                ( TieredList
                                                 , popTiered
                                                 )
 import           Haze.Bencoding                 ( DecodeError(..) )
-import           Haze.PeerInfo                  ( PeerID
-                                                , peerIDBytes
-                                                )
 import           Haze.Tracker                   ( Announce(..)
                                                 , AnnounceInfo(..)
                                                 , MetaInfo(..)
+                                                , PeerID
                                                 , TrackStatus(..)
                                                 , Tracker(..)
                                                 , TrackerRequest(..)
@@ -73,6 +71,7 @@ import           Haze.Tracker                   ( Announce(..)
                                                 , announceFromHTTP
                                                 , parseUDPConn
                                                 , parseUDPAnnounce
+                                                , peerIDBytes
                                                 , newUDPRequest
                                                 , encodeUDPRequest
                                                 , updateUDPTransID

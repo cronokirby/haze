@@ -153,5 +153,6 @@ startAll = sequence
     startGateway = do
         peerInfo  <- asks clientPeerInfo
         announces <- asks clientAnnouncerResults
-        gateInfo  <- makeGatewayInfo peerInfo announces
+        meta      <- asks clientMeta
+        gateInfo  <- makeGatewayInfo peerInfo announces meta
         asyncio $ runGatewayM gatewayLoop gateInfo

@@ -11,8 +11,7 @@ module Haze.Tracker
     ( Tracker(..)
     , TieredList
     , MD5Sum(..)
-    , SHA1
-    , getSHA1
+    , SHA1(..)
     , SHAPieces(..)
     , FileInfo(..)
     , FileItem(..)
@@ -31,6 +30,9 @@ module Haze.Tracker
     , Announce(..)
     , AnnounceInfo(..)
     , parseUDPAnnounce
+    , PeerID(..)
+    , peerIDBytes
+    , generatePeerID
     , Peer(..)
     , decodeAnnounce
     , announceFromHTTP
@@ -55,7 +57,11 @@ import qualified Data.ByteString.Char8         as BSC
 import           Data.Hashable                  ( Hashable(..) )
 import qualified Data.HashMap.Strict           as HM
 import qualified Data.Text                     as T
-import           Data.Time.Clock                ( UTCTime )
+import           Data.Time.Clock                ( DiffTime
+                                                , UTCTime
+                                                , getCurrentTime
+                                                , utctDayTime
+                                                )
 import           Data.Time.Clock.POSIX          ( posixSecondsToUTCTime )
 import           Network.Socket                 ( HostName
                                                 , PortNumber
@@ -122,7 +128,7 @@ trackerFromURL t | T.isPrefixOf "udp://" t   = udpFromURL t
 newtype MD5Sum = MD5Sum ByteString deriving (Show)
 
 -- | Represents a 20 byte SHA1 hash
-newtype SHA1 = SHA1 { getSHA1 :: ByteString } deriving (Show)
+newtype SHA1 = SHA1 { getSHA1 :: ByteString } deriving (Eq, Show)
 
 {- | Represents the concatenation of multiple SHA pieces.
 
@@ -465,13 +471,39 @@ data AnnounceInfo = AnnounceInfo
     deriving (Show)
 
 
+-- | Represents an identifier we share with other peers
+newtype PeerID = PeerID ByteString deriving (Eq, Show)
+
+-- | Get the bytestring form of a peer id
+peerIDBytes :: PeerID -> ByteString
+peerIDBytes (PeerID bytes) = bytes
+
+{- | Generates a peer id from scratch.
+
+Note that this should be generated before the first interaction with
+a tracker, and not at every interaction with the tracker.
+
+Uses the Azureus style id, with HZ as the prefix, and then appends
+a UTC timestamp, before then taking only the first 20 bytes.
+-}
+generatePeerID :: MonadIO m => m PeerID
+generatePeerID = liftIO $ do
+    secs <- getSeconds
+    let whole = "-HZ010-" <> Relude.show secs
+        cut   = BS.take 20 whole
+    return (PeerID cut)
+  where
+    getSeconds :: MonadIO m => m DiffTime
+    getSeconds = liftIO $ utctDayTime <$> getCurrentTime
+
+
 {- | Represents a peer in the swarm
 
 A Peer can be hashed, which will use it's peerID,
 if it has one, and the host name.
 -}
 data Peer = Peer
-    { peerID :: !(Maybe Text)
+    { peerID :: !(Maybe PeerID)
     , peerHost :: !HostName
     , peerPort :: !PortNumber
     }
@@ -482,7 +514,7 @@ instance Eq Peer where
 
 instance Hashable Peer where
     hashWithSalt salt (Peer peerID host _) =
-        salt `hashWithSalt` peerID `hashWithSalt` host
+        salt `hashWithSalt` (peerIDBytes <$> peerID) `hashWithSalt` host
 
 {- | This reads a bytestring announce from HTTP
 
@@ -560,7 +592,7 @@ decodeAnnounce = Decoder doDecode
       where
         getPeer :: Bencoding -> Maybe Peer
         getPeer (BMap mp) = do
-            let peerID = withKey "peer id" mp tryText
+            let peerID = PeerID <$> withKey "peer id" mp tryBS
             peerHost <- BSC.unpack <$> withKey "ip" mp tryBS
             peerPort <- withKey "port" mp tryNum
             return (Peer { .. })

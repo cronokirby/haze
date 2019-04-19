@@ -11,10 +11,7 @@ We also want to keep track of certain statistics about the peers,
 such as their current download rate, and the sets of pieces they have.
 -}
 module Haze.PeerInfo
-    ( PeerID
-    , peerIDBytes
-    , generatePeerID
-    , PeerFriendship(..)
+    ( PeerFriendship(..)
     , PeerHandle(..)
     , PeerSpecific(..)
     , PeerInfo(..)
@@ -35,13 +32,9 @@ import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , writeTBQueue
                                                 )
 import           Data.Array                     ( Array )
-import qualified Data.ByteString               as BS
 import qualified Data.HashMap.Strict           as HM
 import qualified Data.Set                      as Set
-import           Data.Time.Clock                ( DiffTime
-                                                , getCurrentTime
-                                                , utctDayTime
-                                                )
+
 
 import           Data.RateWindow                ( RateWindow
                                                 , emptyRateWindow
@@ -56,36 +49,14 @@ import           Haze.PieceBuffer               ( PieceBuffer
                                                 , makePieceBuffer
                                                 )
 import           Haze.Tracker                   ( MetaInfo
+                                                , PeerID
+                                                , generatePeerID
                                                 , Peer
                                                 , TrackStatus
                                                 , firstTrackStatus
                                                 )
 
 
--- | Represents an identifier we share with other peers
-newtype PeerID = PeerID ByteString
-
--- | Get the bytestring form of a peer id
-peerIDBytes :: PeerID -> ByteString
-peerIDBytes (PeerID bytes) = bytes
-
-{- | Generates a peer id from scratch.
-
-Note that this should be generated before the first interaction with
-a tracker, and not at every interaction with the tracker.
-
-Uses the Azureus style id, with HZ as the prefix, and then appends
-a UTC timestamp, before then taking only the first 20 bytes.
--}
-generatePeerID :: MonadIO m => m PeerID
-generatePeerID = liftIO $ do
-    secs <- getSeconds
-    let whole = "-HZ010-" <> show secs
-        cut   = BS.take 20 whole
-    return (PeerID cut)
-  where
-    getSeconds :: MonadIO m => m DiffTime
-    getSeconds = liftIO $ utctDayTime <$> getCurrentTime
 
 
 {- | Holds information on our relationship with a peer
