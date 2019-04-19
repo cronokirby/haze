@@ -14,6 +14,11 @@ module Haze.Peer
     , ParseCallBack
     , firstParseCallBack
     , parseMessages
+    , PeerMInfo
+    , makePeerMInfo
+    , PeerM
+    , runPeerM
+    , startPeer
     )
 where
 
@@ -211,6 +216,12 @@ data PeerMInfo = PeerMInfo
     , peerMHandle :: !PeerHandle
     }
 
+-- | Construct new information that the peer needs
+makePeerMInfo :: MonadIO m => Socket -> PeerHandle -> m PeerMInfo
+makePeerMInfo sock peerMHandle = do
+    peerMState <- newTVarIO (initialPeerState sock)
+    return PeerMInfo {..}
+
 -- | Represents computations for a peer
 newtype PeerM a = PeerM (ReaderT PeerMInfo IO a)
         deriving (Functor, Applicative, Monad,
@@ -235,8 +246,8 @@ instance HasPieceBuffer PeerM where
     getPieceBuffer = asks handleBuffer
 
 -- | Run a peer computation given the initial information it needs
-runPeerM :: PeerMInfo -> PeerM a -> IO a
-runPeerM r (PeerM rdr) = runReaderT rdr r
+runPeerM :: PeerM a -> PeerMInfo -> IO a
+runPeerM (PeerM rdr) = runReaderT rdr
 
 -- | Increment the upload count of our Status
 incrementTrackUp :: Integral a => a -> PeerM ()
@@ -470,7 +481,7 @@ and one waiting to kill the connection if it gets stale.
 startPeer :: PeerM ()
 startPeer = do
     r <- PeerM ask
-    let startAsync = liftIO . async . runPeerM r
+    let startAsync = liftIO . async . flip runPeerM r
     checkAlive <- startAsync checkKeepAliveLoop
     stayAlive <- startAsync sendKeepAliveLoop
     socket    <- startAsync (recvLoop firstParseCallBack)

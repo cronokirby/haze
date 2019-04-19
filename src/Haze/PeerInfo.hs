@@ -195,8 +195,9 @@ makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
                                                         infoStatus
 
 -- | Add a new peer to the information we have
-addPeer :: MonadIO m => Peer -> PeerInfo -> m PeerHandle
-addPeer newPeer info = do
+addPeer :: (MonadIO m, HasPeerInfo m) => Peer -> m PeerHandle
+addPeer newPeer = do
+    info <- getPeerInfo
     let mapVar = infoMap info
     newVal <- makePeerSpecific
     atomically $ modifyTVar' mapVar (HM.insert newPeer newVal)
