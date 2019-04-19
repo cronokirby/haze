@@ -114,7 +114,6 @@ startClient = do
 startAll :: ClientM [Async ()]
 startAll = sequence
     [ startAnnouncer
-    , startPrinter
     , startPieceWriter
     , startSelector
     , startGateway
@@ -130,12 +129,6 @@ startAll = sequence
         logH   <- asks clientLogger
         info   <- makeAnnouncerInfo meta peerID status q logH
         asyncio $ runAnnouncerM launchAnnouncer info
-    startPrinter :: ClientM (Async ())
-    startPrinter = do
-        q <- asks clientAnnouncerResults
-        asyncio . forever $ do
-            ann <- atomically $ readTBQueue q
-            print ann
     startPieceWriter :: ClientM (Async ())
     startPieceWriter = do
         peerInfo <- asks clientPeerInfo
@@ -154,5 +147,6 @@ startAll = sequence
         peerInfo  <- asks clientPeerInfo
         announces <- asks clientAnnouncerResults
         meta      <- asks clientMeta
-        gateInfo  <- makeGatewayInfo peerInfo announces meta
+        logger    <- asks clientLogger
+        gateInfo  <- makeGatewayInfo peerInfo announces meta logger
         asyncio $ runGatewayM gatewayLoop gateInfo

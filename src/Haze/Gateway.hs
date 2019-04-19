@@ -17,7 +17,6 @@ where
 
 import           Relude
 
-import           Control.Concurrent             ( forkIO )
 import           Control.Concurrent.Async       ( forConcurrently
                                                 , withAsync
                                                 )
@@ -39,6 +38,12 @@ import qualified Network.Socket                as Net
 import qualified Network.Simple.TCP            as TCP
 import           System.Random.Shuffle          ( shuffleM )
 
+import           Control.Logger                 ( HasLogger(..)
+                                                , LoggerHandle
+                                                , Importance(..)
+                                                , (.=)
+                                                , log
+                                                )
 import           Haze.Peer                      ( makePeerMInfo
                                                 , runPeerM
                                                 , startPeer
@@ -122,6 +127,8 @@ data GatewayInfo = GatewayInfo
     , gatewayAnnounces :: !(TBQueue AnnounceInfo)
     -- | The torrent we're downloading
     , gatewayMeta :: !MetaInfo
+    -- | The handle for our logger
+    , gatewayLogger :: !LoggerHandle
     -- | The number of connections we currently have
     , gatewayConnections :: !(TVar Int)
     }
@@ -132,8 +139,9 @@ makeGatewayInfo
     => PeerInfo
     -> TBQueue AnnounceInfo
     -> MetaInfo
+    -> LoggerHandle
     -> m GatewayInfo
-makeGatewayInfo info q meta = GatewayInfo info q meta <$> newTVarIO 0
+makeGatewayInfo info q meta lh = GatewayInfo info q meta lh <$> newTVarIO 0
 
 -- | A computation with access to gateway information
 newtype GatewayM a = GatewayM (ReaderT GatewayInfo IO a)
@@ -143,6 +151,13 @@ newtype GatewayM a = GatewayM (ReaderT GatewayInfo IO a)
 
 instance HasPeerInfo GatewayM where
     getPeerInfo = asks gatewayPeerInfo
+
+instance HasLogger GatewayM where
+    getLogger = asks gatewayLogger
+    
+-- | Log something with the source set as the gateway
+logGateway :: Importance -> [(Text, Text)] -> GatewayM ()
+logGateway i pairs = log i ("source" .= ("gateway" :: String) : pairs)
 
 -- | run a gateway computation given the right information
 runGatewayM :: GatewayM a -> GatewayInfo -> IO a
@@ -158,6 +173,7 @@ cleanupConnection sock = do
     TCP.closeSock sock
     connections <- asks gatewayConnections
     atomically $ modifyTVar' connections (\x -> x - 1)
+
 {- | Initiate a handshake given an intermediate computation
 
 When we're connecting, we send our header before this function,
@@ -179,7 +195,13 @@ doHandshake peer client sock = void . runMaybeT $ do
     unless client sendPeerID
     let peerWithId = peer { peerID = Just theirID }
     handle    <- MaybeT . fmap Just $ addPeer peerWithId
-    peerMInfo <- makePeerMInfo sock handle
+    logger <- lift $ asks gatewayLogger
+    peerMInfo <- makePeerMInfo sock peer logger handle
+    lift $ logGateway Debug 
+        [ "msg" .= ("starting new peer" :: String)
+        , "peer" .= peer
+        , "self-initiated" .= client
+        ]
     liftIO $ runPeerM startPeer peerMInfo
   where
     sendHeader :: MaybeT GatewayM ()
@@ -195,6 +217,7 @@ doHandshake peer client sock = void . runMaybeT $ do
 -- | Start the loop that listens for new passive connections
 listenLoop :: GatewayM ()
 listenLoop = TCP.listen TCP.HostAny "6881" $ \(mySock, _) -> do
+    logGateway Info ["gateway-listening" .= 6881]
     allInfo <- ask
     liftIO $ go allInfo mySock
   where
@@ -245,6 +268,7 @@ announceLoop = do
     handleAnnounce AnnounceInfo {..} = do
         peerMap <- readTVarIO =<< asks (infoMap . gatewayPeerInfo)
         let newPeers = filter (not . (`HM.member` peerMap)) annPeers
+        logGateway DebugNoisy ["new-peers" .= newPeers]
         connections <- asks gatewayConnections
         allowed     <- atomically $ do
             current <- readTVar connections

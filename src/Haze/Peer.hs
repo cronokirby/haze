@@ -50,8 +50,15 @@ import           Network.Socket                 ( PortNumber
 import           Network.Socket.ByteString      ( recv
                                                 , sendAll
                                                 )
+import qualified Text.Show
 
 import           Data.RateWindow                ( addDownload )
+import           Control.Logger                 ( HasLogger(..)
+                                                , LoggerHandle
+                                                , Importance(..)
+                                                , (.=)
+                                                , log
+                                                )
 import           Haze.Bits                      ( encodeIntegralN
                                                 , parseInt
                                                 , parse16
@@ -72,7 +79,7 @@ import           Haze.PieceBuffer               ( BlockInfo(..)
                                                 , nextBlockM
                                                 , writeBlockM
                                                 )
-import           Haze.Tracker                   (TrackStatus(..))
+import           Haze.Tracker                   (Peer, TrackStatus(..))
 
 
 -- | The messages sent between peers in a torrent
@@ -157,6 +164,14 @@ parseMessage = do
         RecvBlock (BlockIndex index begin) <$> AP.take blockLen
     parseID _ _ = fail "Unrecognised ID, or bad length"
 
+-- | A wrapper around message with a nicer show instance
+newtype PrettyMessage = PrettyMessage Message
+
+instance Text.Show.Show PrettyMessage where
+    show (PrettyMessage m) = case m of
+        RecvBlock i _ -> show (RecvBlock i "<bytes>")
+        msg           -> show msg
+
 
 newtype ParseCallBack = ParseCallBack (ByteString -> AP.Result Message)
 
@@ -212,13 +227,17 @@ sections of the code.
 -}
 data PeerMInfo = PeerMInfo
     { peerMState :: !(TVar PeerState) -- ^ The local state
+    -- | The peer we're connected to
+    , peerMPeer :: !Peer
+    -- | The logging handle
+    , peerMLogger :: !LoggerHandle
     -- | A handle to the information shared with us
     , peerMHandle :: !PeerHandle
     }
 
 -- | Construct new information that the peer needs
-makePeerMInfo :: MonadIO m => Socket -> PeerHandle -> m PeerMInfo
-makePeerMInfo sock peerMHandle = do
+makePeerMInfo :: MonadIO m => Socket -> Peer -> LoggerHandle -> PeerHandle -> m PeerMInfo
+makePeerMInfo sock peerMPeer peerMLogger peerMHandle = do
     peerMState <- newTVarIO (initialPeerState sock)
     return PeerMInfo {..}
 
@@ -244,6 +263,15 @@ instance MonadState PeerState PeerM where
 
 instance HasPieceBuffer PeerM where
     getPieceBuffer = asks handleBuffer
+
+instance HasLogger PeerM where
+    getLogger = PeerM (asks peerMLogger)
+
+-- | Log something with the source set as this peer
+logPeer :: Importance -> [(Text, Text)] -> PeerM ()
+logPeer i pairs = do
+    peer <- PeerM (asks peerMPeer)
+    log i ("source" .= peer : pairs)
 
 -- | Run a peer computation given the initial information it needs
 runPeerM :: PeerM a -> PeerMInfo -> IO a
@@ -322,7 +350,7 @@ sendToWriter msg = do
 
 -- | Modify our state based on a message, and send back a reply
 reactToMessage :: Message -> PeerM ()
-reactToMessage msg = case msg of
+reactToMessage msg = doLog *> case msg of
     KeepAlive -> modify (\ps -> ps { peerKeepAlive = True })
     Choke     -> modifyFriendship (\f -> f { peerIsChoking = True })
     UnChoke   -> do
@@ -358,6 +386,8 @@ reactToMessage msg = case msg of
         let toCancel' = Set.insert index toCancel
         modify (\ps -> ps { peerShouldCancel = toCancel' })
     Port _ -> return ()
+  where
+    doLog = logPeer DebugNoisy ["msg" .= PrettyMessage msg]
 
 -- | React to messages sent by the writer
 reactToWriter :: WriterToPeer -> PeerM ()

@@ -39,7 +39,8 @@ import qualified Data.Text                     as Text
 Can be used to not log events that are of a certain importance.
 -}
 data Importance
-    = Debug
+    = DebugNoisy
+    | Debug
     | Info
     | Error
     deriving (Eq, Ord, Show)
@@ -103,7 +104,7 @@ data LoggerConfig = LoggerConfig
 
 -- | A default value for the logger configuration
 defaultLoggerConfig :: LoggerConfig
-defaultLoggerConfig = LoggerConfig ", " True 1024
+defaultLoggerConfig = LoggerConfig ", " True 4096
 
 {- | Start a logger with a given config
 
