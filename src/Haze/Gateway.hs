@@ -18,7 +18,9 @@ where
 import           Relude
 
 import           Control.Concurrent             ( forkIO )
-import           Control.Concurrent.Async       ( withAsync )
+import           Control.Concurrent.Async       ( forConcurrently
+                                                , withAsync
+                                                )
 import           Control.Concurrent.STM         ( retry )
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , readTBQueue
@@ -192,16 +194,19 @@ doHandshake peer client sock = void . runMaybeT $ do
 
 -- | Start the loop that listens for new passive connections
 listenLoop :: GatewayM ()
-listenLoop = TCP.listen TCP.HostAny "6881" $ \(mySock, _) -> forever $ do
-    connections <- asks gatewayConnections
-    atomically $ do
-        current <- readTVar connections
-        if current >= maxPassiveConnections
-            then retry
-            else writeTVar connections (current + 1)
+listenLoop = TCP.listen TCP.HostAny "6881" $ \(mySock, _) -> do
     allInfo <- ask
-    TCP.acceptFork mySock (\h -> runGatewayM (accept h) allInfo)
+    liftIO $ go allInfo mySock
   where
+    go allInfo mySock = do
+        let connections = gatewayConnections allInfo
+        atomically $ do
+            current <- readTVar connections
+            if current >= maxPassiveConnections
+                then retry
+                else writeTVar connections (current + 1)
+        let forked = TCP.accept mySock (\h -> runGatewayM (accept h) allInfo)
+        withAsync forked . const $ go allInfo mySock
     accept handle@(sock, _) =
         handshakeWith handle `finally` cleanupConnection sock
     handshakeWith (sock, sockAddr) = do
@@ -229,12 +234,14 @@ gatewayLoop = do
 
 -- | Start the loop connecting to new peers after announces
 announceLoop :: GatewayM ()
-announceLoop = forever $ do
+announceLoop = do
     q       <- asks gatewayAnnounces
     annInfo <- atomically $ readTBQueue q
-    handleAnnounce annInfo
+    forked  <- handleAnnounce annInfo
+    allInfo <- ask
+    liftIO (withAsync forked (const (runGatewayM announceLoop allInfo)))
   where
-    handleAnnounce :: AnnounceInfo -> GatewayM ()
+    handleAnnounce :: AnnounceInfo -> GatewayM (IO ())
     handleAnnounce AnnounceInfo {..} = do
         peerMap <- readTVarIO =<< asks (infoMap . gatewayPeerInfo)
         let newPeers = filter (not . (`HM.member` peerMap)) annPeers
@@ -247,8 +254,8 @@ announceLoop = forever $ do
             return toAdd
         chosen  <- take allowed <$> shuffleM newPeers
         context <- ask
-        forM_ chosen $ \peer ->
-            liftIO . void . forkIO $ runGatewayM (connect peer) context
+        return . void $ forConcurrently chosen $ \peer ->
+            runGatewayM (connect peer) context
     connect :: Peer -> GatewayM ()
     connect peer = bracket (connectToPeer peer) cleanupConnection
         $ doHandshake peer True
