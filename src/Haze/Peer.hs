@@ -426,16 +426,17 @@ reactToMessage msg = doLog *> case msg of
         PeerInfo{..} <- ask
         let PeerHandle{..} = peerHandle
         modifyFriendship (\f -> f { peerIsInterested = True })
-        whenM (readTVarIO peerWatched) $ do
-            atomically $ do
-                writeTVar peerWatched False
-                writeTBQueue handleToSelector (PeerBecameInterested peerPeer)
+        whenM (readTVarIO peerWatched) . atomically $ do
+            writeTVar peerWatched False
+            writeTBQueue handleToSelector (PeerBecameInterested peerPeer)
     UnInterested -> modifyFriendship (\f -> f { peerIsInterested = False })
     Have piece   -> do
         addPiece piece
+        adjustInterest
         jumpRarestIfFree
     BitField pieces -> do
         forM_ pieces addPiece
+        adjustInterest
         jumpRarestIfFree
     Request info -> do
         me <- asks peerPeer
@@ -468,6 +469,7 @@ reactToWriter msg = case msg of
             $ sendMessage (RecvBlock index bytes)
     PieceAcquired piece -> do
         sendMessage (Have piece)
+        adjustInterest
         requested <- asks peerRequested >>= readTVarIO
         choking   <- askFriendship peerIsChoking
         when (not choking && isNothing requested) requestRarestPiece
