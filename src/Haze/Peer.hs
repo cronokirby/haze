@@ -134,7 +134,7 @@ encodeMessage pieceCount m = case m of
     Have    i     -> BS.pack $ encInt 5 ++ [4] ++ encInt i
     BitField s    -> 
         let groupCount = div (pieceCount -1) 8 + 1
-            bitMap = IntMap.fromList (zip [0..] (replicate groupCount (0 :: Word8)))
+            bitMap = IntMap.fromList (zip [0..] (replicate groupCount 0))
             set x b = Bits.setBit b (7 - mod x 8)
             added = foldr (\x acc -> IntMap.adjust (set x) (x `div` 8) acc) bitMap s
         in BS.pack $ encInt (groupCount + 1) ++ [5] ++ IntMap.elems added
@@ -391,14 +391,10 @@ reactToMessage msg = doLog *> case msg of
     UnInterested -> modifyFriendship (\f -> f { peerIsInterested = False })
     Have piece   -> do
         addPiece piece
-        whenJustM getRarestPiece $ \next -> do
-            sendMessage Interested
-            requested <- gets peerRequested
-            choking   <- askFriendship peerIsChoking
-            case (choking, requested) of
-                (False, Nothing) -> request next
-                (_    , _      ) -> return ()
-    BitField _ -> undefined
+        jumpRarestIfFree
+    BitField pieces -> do
+        forM_ pieces addPiece
+        jumpRarestIfFree
     Request info -> do
         me <- asks handlePeer
         let amChoking = askFriendship peerAmChoking
@@ -413,6 +409,13 @@ reactToMessage msg = doLog *> case msg of
         modify (\ps -> ps { peerShouldCancel = toCancel' })
     Port _ -> return ()
   where
+    jumpRarestIfFree = whenJustM getRarestPiece $ \next -> do
+        sendMessage Interested
+        requested <- gets peerRequested
+        choking   <- askFriendship peerIsChoking
+        case (choking, requested) of
+            (False, Nothing) -> request next
+            (_    , _      ) -> return ()
     doLog = logPeer DebugNoisy ["msg" .= PrettyMessage msg]
 
 -- | React to messages sent by the writer
