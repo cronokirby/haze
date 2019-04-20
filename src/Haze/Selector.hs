@@ -31,6 +31,12 @@ import qualified Data.HashSet                  as HS
 import           Data.Time.Clock                ( getCurrentTime )
 import           System.Random                  ( randomRIO )
 
+import           Control.Logger                 ( HasLogger(..)
+                                                , LoggerHandle
+                                                , Importance(..)
+                                                , (.=)
+                                                , log
+                                                )
 import           Data.RateWindow                ( RateWindow
                                                 , getRate
                                                 )
@@ -47,6 +53,8 @@ import           Haze.Tracker                   ( Peer )
 -- | The information a Selector needs
 data SelectorInfo = SelectorInfo
     { selectorPeerInfo :: !PeerInfo -- | Information on peers
+    -- | The handle to the logger
+    , selectorLogger :: !LoggerHandle
     -- | The set of peers we've chosen to download to
     , selectorDownloaders :: !(TVar (HS.HashSet Peer))
     {- | The set of peers we'd like to download from us
@@ -59,17 +67,25 @@ data SelectorInfo = SelectorInfo
     }
 
 -- | Construct the information a Selector needs
-makeSelectorInfo :: MonadIO m => PeerInfo -> m SelectorInfo
-makeSelectorInfo peerInfo =
-    SelectorInfo peerInfo <$> newTVarIO HS.empty <*> newTVarIO HS.empty
+makeSelectorInfo :: MonadIO m => PeerInfo -> LoggerHandle -> m SelectorInfo
+makeSelectorInfo peerInfo lh =
+    SelectorInfo peerInfo lh <$> newTVarIO HS.empty <*> newTVarIO HS.empty
 
 newtype SelectorM a = SelectorM (ReaderT SelectorInfo IO a)
     deriving (Functor, Applicative, Monad,
               MonadReader SelectorInfo, MonadIO)
 
+instance HasLogger SelectorM where
+    getLogger = asks selectorLogger
+
 -- | Run a selector computation given the right information
 runSelectorM :: SelectorM a -> SelectorInfo -> IO a
 runSelectorM (SelectorM m) = runReaderT m
+
+-- | Log information with the source as the selector
+logSelector :: Importance -> [(Text, Text)] -> SelectorM ()
+logSelector i pairs = log i ("source" .= ("selector" :: String) : pairs)
+
 
 {- | This starts the selector process
 
@@ -78,6 +94,7 @@ select a new peer every 30, and listen to message any time.
 -}
 selectorLoop :: SelectorM ()
 selectorLoop = do
+    logSelector Info ["msg" .= ("started" :: String)]
     info <- ask
     let peerAction   = runSelectorM fromPeerLoop info
         selectAction = runSelectorM (selectLoop 0) info
@@ -90,6 +107,8 @@ selectorLoop = do
         reactToPeer msg
     selectLoop :: Int -> SelectorM ()
     selectLoop n = do
+        downloaders <- readTVarIO =<< asks selectorDownloaders
+        logSelector Debug ["downloaders" .= HS.toList downloaders]
         liftIO $ threadDelay 10_000_000
         selectPeers
         if n == 2
@@ -133,6 +152,7 @@ selectPeers = do
             let spec = fromJust $ HM.lookup peer peerMap
             friendship <- readTVarIO $ peerFriendship spec
             return (peerIsInterested friendship)
+    logSelector DebugNoisy ["sorted-peers" .= sortedPeers]
     interestedPeers <- filterM (isInterested . fst) sortedPeers
     let bestRate = fromMaybe 0.0 . viaNonEmpty head $ map snd interestedPeers
         newDownloaders = HS.fromList . map fst $ take 4 interestedPeers

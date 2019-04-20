@@ -135,7 +135,8 @@ startAll = sequence
     startSelector :: ClientM (Async ())
     startSelector = do
         peerInfo <- asks clientPeerInfo
-        selInfo  <- makeSelectorInfo peerInfo
+        logger   <- asks clientLogger
+        selInfo  <- makeSelectorInfo peerInfo logger
         asyncio $ runSelectorM selectorLoop selInfo
     startGateway :: ClientM (Async ())
     startGateway = do
