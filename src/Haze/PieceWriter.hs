@@ -39,6 +39,7 @@ import qualified Data.ByteString               as BS
 import qualified Data.ByteString.Lazy          as LBS
 import           Data.List                      ( nub )
 import           Data.Maybe                     ( fromJust )
+import qualified Data.Set                      as Set
 import           Path                           ( Path
                                                 , Abs
                                                 , File
@@ -340,7 +341,10 @@ writePiecesM = do
     pieces <- saveCompletePiecesM
     info   <- asks pieceStructure
     writePieces info pieces
-    forM_ pieces $ sendWriterToAll . PieceAcquired . fst
+    let pieceSet = Set.fromList $ map fst pieces
+    forM_ pieceSet $ sendWriterToAll . PieceAcquired
+    ourPieces <- asks (infoOurPieces . peerInfo)
+    atomically $ modifyTVar' ourPieces (Set.union pieceSet)
     let savedCount = sum $ map (BS.length . snd) pieces
     status <- infoStatus <$> getPeerInfo
     atomically $ modifyTVar' status (updateLeft savedCount)
