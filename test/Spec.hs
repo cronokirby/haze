@@ -5,6 +5,7 @@ import           Data.Attoparsec.ByteString     ( parseOnly )
 import qualified Data.ByteString               as BS
 import qualified Data.HashMap.Strict           as HM
 import           Data.Maybe                     ( fromJust )
+import qualified Data.Set                      as Set
 import           Hedgehog
 import qualified Hedgehog.Gen                  as Gen
 import qualified Hedgehog.Range                as Range
@@ -346,7 +347,7 @@ propBencoding = property $ do
 propMessage :: Property
 propMessage = property $ do
     msg <- forAll genMessage
-    parseOnly parseMessage (encodeMessage msg) === Right msg
+    parseOnly parseMessage (encodeMessage 16 msg) === Right msg
 
 propMultiMessage :: Property
 propMultiMessage = property $ do
@@ -354,7 +355,7 @@ propMultiMessage = property $ do
     doParse (encodeMessages msgs) === Just msgs
   where
     encodeMessages :: [Message] -> ByteString
-    encodeMessages = foldMap encodeMessage
+    encodeMessages = foldMap (encodeMessage 16)
     doParse :: ByteString -> Maybe [Message]
     doParse = fmap fst . parseMessages firstParseCallBack
     genMessages :: MonadGen m => m [Message]
@@ -372,7 +373,10 @@ genMessage = Gen.choice
     , Request <$> genBlockInfo
     , Cancel <$> genBlockInfo
     , liftA2 RecvBlock genBlockIndex genBS
+    , BitField . Set.fromList <$> Gen.list (Range.linear 0 32) genPiece
     ]
+genPiece :: MonadGen m => m Int
+genPiece = Gen.int (Range.linear 0 15)
 genInt :: MonadGen m => m Int
 genInt = Gen.int (Range.linear 0 100)
 genBS :: MonadGen m => m ByteString

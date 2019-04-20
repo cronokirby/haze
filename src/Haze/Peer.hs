@@ -40,7 +40,9 @@ import           Data.Array                     ( (!)
                                                 , assocs
                                                 , bounds
                                                 )
+import qualified Data.Bits                     as Bits
 import qualified Data.ByteString               as BS
+import qualified Data.IntMap                   as IntMap
 import           Data.Ix                        ( inRange )
 import qualified Data.Set                      as Set
 import           Data.Time.Clock                ( getCurrentTime )
@@ -96,6 +98,12 @@ data Message
     | UnInterested
     -- | The sender claims to have piece #index
     | Have !Int
+    {- | The sender claims to have a set of pieces
+
+    This should only be sent as the first message, and
+    should be ignored in all other cases.
+    -}
+    | BitField !(Set Int)
     {- | The sender is requesting a block in a certain piece.
 
     The first Int represents which piece is being asked for. The 2nd
@@ -116,14 +124,20 @@ data Message
 
 
 -- | Encodes a message as a bytestring, ready to send
-encodeMessage :: Message -> ByteString
-encodeMessage m = case m of
+encodeMessage :: Int -> Message -> ByteString
+encodeMessage pieceCount m = case m of
     KeepAlive     -> BS.pack $ encInt 0
     Choke         -> BS.pack $ encInt 1 ++ [0]
     UnChoke       -> BS.pack $ encInt 1 ++ [1]
     Interested    -> BS.pack $ encInt 1 ++ [2]
     UnInterested  -> BS.pack $ encInt 1 ++ [3]
     Have    i     -> BS.pack $ encInt 5 ++ [4] ++ encInt i
+    BitField s    -> 
+        let groupCount = div (pieceCount -1) 8 + 1
+            bitMap = IntMap.fromList (zip [0..] (replicate groupCount (0 :: Word8)))
+            set x b = Bits.setBit b (7 - mod x 8)
+            added = foldr (\x acc -> IntMap.adjust (set x) (x `div` 8) acc) bitMap s
+        in BS.pack $ encInt (groupCount + 1) ++ [5] ++ IntMap.elems added
     Request block -> BS.pack $ encInt 13 ++ [6] ++ encBlock block
     RecvBlock (BlockIndex a b) block ->
         let len = BS.length block
@@ -154,6 +168,12 @@ parseMessage = do
     parseID 1  2 = return Interested
     parseID 1  3 = return UnInterested
     parseID 5  4 = Have <$> parseInt
+    parseID ln 5 = do
+        bitSets <- BS.unpack <$> AP.take (ln - 1)
+        let hasIndex w i = Bits.testBit w (7 - i)
+            tests = map (\w -> filter (hasIndex w) [0..7]) bitSets
+            pieceGroups = zipWith (\start -> map (+start)) [0,8..] tests
+        return . BitField . Set.fromList  $ concat pieceGroups
     parseID 13 6 = Request <$> liftA3 makeBlockInfo parseInt parseInt parseInt
     parseID 13 8 = Cancel <$> liftA3 makeBlockInfo parseInt parseInt parseInt
     parseID 3  9 = Port <$> parse16
@@ -273,6 +293,10 @@ logPeer i pairs = do
     peer <- PeerM (asks peerMPeer)
     log i ("source" .= peer : pairs)
 
+-- | Get the total number of pieces
+getPieceCount :: PeerM Int
+getPieceCount = (+1) . snd . bounds <$> asks handlePieces
+
 -- | Run a peer computation given the initial information it needs
 runPeerM :: PeerM a -> PeerMInfo -> IO a
 runPeerM (PeerM rdr) = runReaderT rdr
@@ -337,7 +361,8 @@ addPiece piece = do
 sendMessage :: Message -> PeerM ()
 sendMessage msg = do
     socket <- gets peerSocket
-    let bytes = encodeMessage msg
+    pieceCount <- getPieceCount
+    let bytes = encodeMessage pieceCount msg
     incrementTrackUp (BS.length bytes)
     liftIO $ sendAll socket bytes
 
@@ -373,6 +398,7 @@ reactToMessage msg = doLog *> case msg of
             case (choking, requested) of
                 (False, Nothing) -> request next
                 (_    , _      ) -> return ()
+    BitField _ -> undefined
     Request info -> do
         me <- asks handlePeer
         let amChoking = askFriendship peerAmChoking
