@@ -20,7 +20,6 @@ import           Control.Concurrent.Async       ( Async
                                                 )
 import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , newTBQueueIO
-                                                , readTBQueue
                                                 )
 import           Control.Exception.Safe         ( finally )
 import           Path                           ( Path
@@ -113,11 +112,7 @@ startClient = do
 -- | Start all the sub components
 startAll :: ClientM [Async ()]
 startAll = sequence
-    [ startAnnouncer
-    , startPieceWriter
-    , startSelector
-    , startGateway
-    ]
+    [startAnnouncer, startPieceWriter, startSelector, startGateway]
   where
     asyncio = liftIO . async
     startAnnouncer :: ClientM (Async ())

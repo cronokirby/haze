@@ -495,7 +495,7 @@ recvLoop cb = do
     atomically $ modifyTVar' dlRate shiftRates
     incrementTrackDown byteCount
     case parseMessages cb bytes of
-        Nothing          -> cancel
+        Nothing          -> recvLoop firstParseCallBack
         Just (msgs, cb') -> do
             forM_ msgs reactToMessage
             recvLoop cb'
@@ -513,9 +513,9 @@ startPeer = do
     r <- PeerM ask
     let startAsync = liftIO . async . flip runPeerM r
     checkAlive <- startAsync checkKeepAliveLoop
-    stayAlive <- startAsync sendKeepAliveLoop
-    socket    <- startAsync (recvLoop firstParseCallBack)
+    stayAlive  <- startAsync sendKeepAliveLoop
+    socket     <- startAsync (recvLoop firstParseCallBack)
     selector   <- startAsync selectorLoop
-    writer    <- startAsync writerLoop
-    void . liftIO $ waitAnyCatchCancel 
-        [checkAlive, stayAlive, socket, selector, writer]
+    writer     <- startAsync writerLoop
+    (_, e) <- liftIO $ waitAnyCatchCancel [checkAlive, stayAlive, socket, selector, writer]
+    logPeer Debug ["peer-cancel" .= e]

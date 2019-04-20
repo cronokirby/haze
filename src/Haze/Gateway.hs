@@ -17,7 +17,7 @@ where
 
 import           Relude
 
-import           Control.Concurrent.Async       ( forConcurrently
+import           Control.Concurrent.Async       ( async
                                                 , withAsync
                                                 )
 import           Control.Concurrent.STM         ( retry )
@@ -88,7 +88,7 @@ parseHandshake = do
     void $ AP.word8 19
     void $ AP.string "BitTorrent protocol"
     void $ AP.take 8
-    hash <- AP.take 8
+    hash <- AP.take 20
     return (HandshakeStart (SHA1 hash))
 
 -- | A parser for the peer id
@@ -154,7 +154,7 @@ instance HasPeerInfo GatewayM where
 
 instance HasLogger GatewayM where
     getLogger = asks gatewayLogger
-    
+
 -- | Log something with the source set as the gateway
 logGateway :: Importance -> [(Text, Text)] -> GatewayM ()
 logGateway i pairs = log i ("source" .= ("gateway" :: String) : pairs)
@@ -195,9 +195,10 @@ doHandshake peer client sock = void . runMaybeT $ do
     unless client sendPeerID
     let peerWithId = peer { peerID = Just theirID }
     handle    <- MaybeT . fmap Just $ addPeer peerWithId
-    logger <- lift $ asks gatewayLogger
+    logger    <- lift $ asks gatewayLogger
     peerMInfo <- makePeerMInfo sock peer logger handle
-    lift $ logGateway Debug 
+    lift $ logGateway
+        Debug
         [ "msg" .= ("starting new peer" :: String)
         , "peer" .= peer
         , "self-initiated" .= client
@@ -217,10 +218,11 @@ doHandshake peer client sock = void . runMaybeT $ do
 -- | Start the loop that listens for new passive connections
 listenLoop :: GatewayM ()
 listenLoop = TCP.listen TCP.HostAny "6881" $ \(mySock, _) -> do
-    logGateway Info ["gateway-listening" .= 6881]
+    logGateway Info ["gateway-listening" .= (6881 :: Int)]
     allInfo <- ask
     liftIO $ go allInfo mySock
   where
+    go :: GatewayInfo -> TCP.Socket -> IO ()
     go allInfo mySock = do
         let connections = gatewayConnections allInfo
         atomically $ do
@@ -228,8 +230,9 @@ listenLoop = TCP.listen TCP.HostAny "6881" $ \(mySock, _) -> do
             if current >= maxPassiveConnections
                 then retry
                 else writeTVar connections (current + 1)
-        let forked = TCP.accept mySock (\h -> runGatewayM (accept h) allInfo)
-        withAsync forked . const $ go allInfo mySock
+        TCP.accept mySock $ \h -> do
+            let forked = runGatewayM (accept h) allInfo
+            void . withAsync forked $ const (go allInfo mySock)
     accept handle@(sock, _) =
         handshakeWith handle `finally` cleanupConnection sock
     handshakeWith (sock, sockAddr) = do
@@ -260,15 +263,12 @@ announceLoop :: GatewayM ()
 announceLoop = do
     q       <- asks gatewayAnnounces
     annInfo <- atomically $ readTBQueue q
-    forked  <- handleAnnounce annInfo
-    allInfo <- ask
-    liftIO (withAsync forked (const (runGatewayM announceLoop allInfo)))
+    handleAnnounce annInfo
   where
-    handleAnnounce :: AnnounceInfo -> GatewayM (IO ())
+    handleAnnounce :: AnnounceInfo -> GatewayM ()
     handleAnnounce AnnounceInfo {..} = do
         peerMap <- readTVarIO =<< asks (infoMap . gatewayPeerInfo)
         let newPeers = filter (not . (`HM.member` peerMap)) annPeers
-        logGateway DebugNoisy ["new-peers" .= newPeers]
         connections <- asks gatewayConnections
         allowed     <- atomically $ do
             current <- readTVar connections
@@ -278,8 +278,9 @@ announceLoop = do
             return toAdd
         chosen  <- take allowed <$> shuffleM newPeers
         context <- ask
-        return . void $ forConcurrently chosen $ \peer ->
-            runGatewayM (connect peer) context
+        logGateway DebugNoisy ["chosen" .= chosen]
+        forM_ chosen $ \peer ->
+            liftIO . void . async $ runGatewayM (connect peer) context
     connect :: Peer -> GatewayM ()
     connect peer = bracket (connectToPeer peer) cleanupConnection
         $ doHandshake peer True
