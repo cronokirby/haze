@@ -78,7 +78,7 @@ executable haze
   default-extensions:  OverloadedStrings
                      , NoImplicitPrelude
 
-test-suite darby-test
+test-suite haze-test
   type:              exitcode-stdio-1.0
   main-is:           Spec.hs
   hs-source-dirs:    test
