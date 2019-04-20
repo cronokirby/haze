@@ -214,6 +214,38 @@ parseMessages callback bytes = do
         Partial f   -> Just (acc, ParseCallBack f)
         Done next m -> gotoPartial firstParseCallBack next (m : acc)
 
+{-
+The logic inside the peer is quite complicated, so here's a
+section dedicated to try and explain it.
+
+The peer logic can be described by a finite state machine,
+where we have a finite set of states the peer can be in,
+and the peer will transition between states in the following situations:
+
+- Receiving a message from our partner
+- Receiving a message from the piece-writer
+- Receiving a message from the selector
+
+When looking specifically at the states the peer might take,
+another useful point of view is that of "reactive variables".
+The idea is that a specific piece of state can be seen as a pure function
+of other changing variables, and its current value depends on the
+current value of the other variables.
+
+Let's look at these variables:
+
+amInterested: Whether or not we're interested in a piece the peer has
+amInterested = notEmpty (theirPieces - myPieces)
+
+currentPieceRequest: The current piece we're requesting
+currentPieceRequest = currentPieceRequest or rarestPiece
+
+After changing our interest in a peer, as soon as they unchoke us,
+we set our current piece request to their rarest piece. We download
+blocks as long as we can. Our current piece will be cleared if we get
+choked. If the piece writer informs us that our current piece has been saved,
+then we can choose another current piece.
+-}
 
 -- | Represents the state of p2p communication
 data PeerState = PeerState
@@ -343,6 +375,28 @@ above.
 -}
 cancel :: PeerM ()
 cancel = throw PeerMistakeException
+
+
+{- | Recalculate whether or not we're interested
+
+This should be called after either our pieces change,
+our their pieces change. This will send the right
+message to the peer if our interest changes.
+-}
+adjustInterest :: PeerM ()
+adjustInterest = do
+    theirPieces <- gets peerPieces
+    ourPieces   <- readTVarIO =<< asks handleOurPieces
+    let wanted = Set.difference theirPieces ourPieces
+        interested = not (Set.null wanted)
+    friendship <- asks handleFriendship
+    shouldInform <- atomically $ do
+        curr <- readTVar friendship
+        writeTVar friendship (curr { peerAmInterested = interested })
+        return (peerAmInterested curr /= interested)
+    when shouldInform $ do
+        let msg = if interested then Interested else UnInterested
+        sendMessage msg
 
 
 -- | Add a piece locally, and increment it's global count.
