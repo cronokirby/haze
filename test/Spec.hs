@@ -24,7 +24,7 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , makeBlockInfo
                                                 , blockInfoMatches
                                                 , sizedPieceBuffer
-                                                , nextBlock
+                                                , takeBlocks
                                                 , writeBlock
                                                 , saveCompletePieces
                                                 , bufferBytes
@@ -130,16 +130,13 @@ pieceBufferSpec = do
         it "returns False when the byte length doesn't match" $ do
             shouldNotMatch (BlockIndex 0 0) ""
             shouldNotMatch (BlockIndex 0 0) "TOO LONG"
-    describe "PieceBuffer.nextBlock" $ do
+    describe "PieceBuffer.takeBlocks" $ do
         it "fetches the first available block"
-            $ nextBlockShouldBe 0 (Just (makeBlockInfo 0 0 1))
+            $ takeBlocksShouldBe 1 0 (Just [(makeBlockInfo 0 0 1)])
         it "returns Nothing for invalid indices" $ do
-            nextBlockShouldBe 100  Nothing
-            nextBlockShouldBe (-1) Nothing
-            nextBlockShouldBe 2    Nothing
-        it "returns Nothing when fetching a full piece"
-            $ let (_, buffer') = nextBlock 0 oneBuffer
-              in  fst (nextBlock 0 buffer') `shouldBe` Nothing
+            takeBlocksShouldBe 1 100  Nothing
+            takeBlocksShouldBe 1 (-1) Nothing
+            takeBlocksShouldBe 1 2     Nothing
     describe "PieceBuffer.bufferBytes" $ do
         it "returns a bytestring with the same length as the buffer" $ do
             BS.length (bufferBytes oneBuffer) `shouldBe` 1
@@ -173,8 +170,8 @@ pieceBufferSpec = do
             pieces1 `shouldBe` [(0, "12")]
             pieces2 `shouldBe` []
   where
-    nextBlockShouldBe piece target =
-        fst (nextBlock piece oneBuffer) `shouldBe` target
+    takeBlocksShouldBe amount piece target =
+        fst (takeBlocks amount piece oneBuffer) `shouldBe` target
     bytesShouldBe buf target = bufferBytes buf `shouldBe` target
     oneBuffer     = sizedPieceBuffer 1 (SHAPieces 1 "") 1
     awkwardBuffer = sizedPieceBuffer 3 (SHAPieces 3 "") 2

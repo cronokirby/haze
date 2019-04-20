@@ -78,7 +78,7 @@ import           Haze.PieceBuffer               ( BlockInfo(..)
                                                 , BlockIndex(..)
                                                 , makeBlockInfo
                                                 , HasPieceBuffer(..)
-                                                , nextBlockM
+                                                , takeBlocksM
                                                 , writeBlockM
                                                 )
 import           Haze.Tracker                   (Peer, TrackStatus(..))
@@ -521,8 +521,8 @@ piece. The time to switch to requesting a different piece is when
 we send a have message to the peer.
 -}
 request :: Int -> PeerM ()
-request piece = nextBlockM piece >>= \case
-    Just info -> do
+request piece = takeBlocksM 1 piece >>= \case
+    Just [info] -> do
         PeerInfo{..} <- ask
         atomically $ writeTVar peerRequested (Just piece)
         sendMessage (Request info)

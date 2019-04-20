@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor   #-}
+{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 {- |
 Description: Contains functions for working with the file Buffer.
@@ -17,12 +18,12 @@ module Haze.PieceBuffer
     , makePieceBuffer
     , sizedPieceBuffer
     , bufferArr
-    , nextBlock
+    , takeBlocks
     , writeBlock
     , saveCompletePieces
     , bufferBytes
     , HasPieceBuffer(..)
-    , nextBlockM
+    , takeBlocksM
     , writeBlockM
     , saveCompletePiecesM
     )
@@ -42,6 +43,7 @@ import qualified Data.ByteString.Char8         as BS
 import           Data.Ix                        ( Ix
                                                 , inRange
                                                 )
+import           Data.Maybe                     ( fromJust )
 
 import           Haze.Tracker                   ( SHAPieces(..)
                                                 , MetaInfo(..)
@@ -101,10 +103,12 @@ Blocks are the unit of data actually downloaded from peers,
 and thus are the unit of data a peer can stake a claim on.
 -}
 data Block
-    -- | An empty block no one has tagged
-    = FreeBlock
-    -- | A block that someone is downloading
-    | TaggedBlock
+    {- | A block tagged a certain number of times
+
+    Initiailly all tagged blocks are 0, and then we try
+    and tag a 0 block with a 1, then 1s with a 2 etc.
+    -}
+    = TaggedBlock Int
     -- | A fully downloaded block
     | FullBlock !ByteString
     deriving (Eq, Show)
@@ -192,8 +196,8 @@ makePiece blockSize pieceSize =
         -- Do the conversion after the division to avoid overflow
         d          = fromIntegral d64
         m          = fromIntegral m64
-        append     = if m == 0 then [] else [SpecialSized m FreeBlock]
-        blocks     = replicate d (NormalSized FreeBlock) ++ append
+        append     = if m == 0 then [] else [SpecialSized m (TaggedBlock 0)]
+        blocks     = replicate d (NormalSized (TaggedBlock 0)) ++ append
     in  Incomplete $ listArray (0, length blocks - 1) blocks
 
 
@@ -228,28 +232,48 @@ blockInfoMatches BlockInfo {..} index bytes =
     index == blockIndex && BS.length bytes == blockSize
 
 
-{- | Acquire and tag the next block in a piece
+{- | Acquire and tag N blocks in the piece buffer
 
-Returns Nothing if no block is free in that piece, or that piece
-doesn't exist.
+Returns Nothing if that piece is completed.
+Note that a completed piece might not have been saved yet.
 -}
-nextBlock :: Int -> PieceBuffer -> (Maybe BlockInfo, PieceBuffer)
-nextBlock piece buf@(PieceBuffer sha blockSize pieces) =
-    maybe (Nothing, buf) (\(a, s) -> (Just a, s)) $ do
-        blocks            <- getIncompletePiece pieces piece
-        (blockIdx, block) <- findFreeBlock blocks
-        let blocks'   = putArr blockIdx (block $> TaggedBlock) blocks
-            pieces'   = putArr piece (Incomplete blocks') pieces
-            thisSize  = getSize blockSize block
-            blockInfo = makeBlockInfo piece (blockIdx * blockSize) thisSize
-        return (blockInfo, PieceBuffer sha blockSize pieces')
+takeBlocks :: Int -> Int -> PieceBuffer -> (Maybe [BlockInfo], PieceBuffer)
+takeBlocks amount piece buf@(PieceBuffer sha blockSize pieces) =
+    case getIncompletePiece pieces piece of
+        Nothing -> (Nothing, buf)
+        Just blocks ->
+            let nextBlocks = findNextBlocks blocks
+                blocks'    = blocks // nextBlocks
+                pieces'    = putArr piece (Incomplete blocks') pieces
+                blockInfos = map makeBlock nextBlocks
+            in  (Just blockInfos, PieceBuffer sha blockSize pieces')
   where
     getIncompletePiece :: Array Int Piece -> Int -> Maybe (Array Int SizedBlock)
     getIncompletePiece arr ix = case safeGet arr ix of
         Just (Incomplete blocks) -> Just blocks
         _                        -> Nothing
-    findFreeBlock :: Array Int SizedBlock -> Maybe (Int, SizedBlock)
-    findFreeBlock = find ((== FreeBlock) . getSizedBlock . snd) . assocs
+    makeBlock :: (Int, SizedBlock) -> BlockInfo
+    makeBlock (blockIdx, block) =
+        let thisSize = getSize blockSize block
+        in  makeBlockInfo piece (blockIdx * blockSize) thisSize
+    getTag :: SizedBlock -> Maybe Int
+    getTag sb =
+        let block = getSizedBlock sb
+        in  case block of
+                TaggedBlock t -> Just t
+                FullBlock   _ -> Nothing
+    incrementTag :: SizedBlock -> SizedBlock
+    incrementTag = fmap $ \case
+        TaggedBlock t   -> TaggedBlock (t + 1)
+        f@(FullBlock _) -> f
+    findNextBlocks :: Array Int SizedBlock -> [(Int, SizedBlock)]
+    findNextBlocks blocks =
+        blocks
+            & assocs
+            & mapMaybe (\(i, b) -> (,) (i, b) <$> getTag b)
+            & sortBy (compare `on` snd)
+            & map (fmap incrementTag . fst)
+            & take amount
 
 {- | Write the data associated with a block to the buffer.
 
@@ -338,15 +362,17 @@ stateTVar f var = atomically $ do
 class HasPieceBuffer m where
     getPieceBuffer :: m (TVar PieceBuffer)
 
--- | Get and tag the next block of a piece from a shared buffer
-nextBlockM :: (MonadIO m, HasPieceBuffer m) => Int -> m (Maybe BlockInfo)
-nextBlockM piece = getPieceBuffer >>= stateTVar (nextBlock piece)
+-- | Get and tag a certain number of blocks from the buffer
+takeBlocksM
+    :: (MonadIO m, HasPieceBuffer m) => Int -> Int -> m (Maybe [BlockInfo])
+takeBlocksM amount piece =
+    getPieceBuffer >>= stateTVar (takeBlocks amount piece)
 
 -- | Commit a block to a shared buffer
 writeBlockM :: (MonadIO m, HasPieceBuffer m) => BlockIndex -> ByteString -> m ()
 writeBlockM index bytes = do
     var <- getPieceBuffer
-    atomically $ modifyTVar' var (writeBlock index bytes) 
+    atomically $ modifyTVar' var (writeBlock index bytes)
 
 -- | Save the completed pieces to the shared buffer
 saveCompletePiecesM :: (MonadIO m, HasPieceBuffer m) => m [(Int, ByteString)]
