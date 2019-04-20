@@ -368,15 +368,16 @@ message to the peer if our interest changes.
 -}
 adjustInterest :: PeerM ()
 adjustInterest = do
-    theirPieces <- readTVarIO =<< asks peerPieces
-    ourPieces   <- readTVarIO =<< asksHandle handleOurPieces
-    let wanted = Set.difference theirPieces ourPieces
-        interested = not (Set.null wanted)
-    friendship <- asksHandle handleFriendship
-    shouldInform <- atomically $ do
-        curr <- readTVar friendship
-        writeTVar friendship (curr { peerAmInterested = interested })
-        return (peerAmInterested curr /= interested)
+    PeerInfo{..} <- ask
+    let PeerHandle{..} = peerHandle
+    (interested, shouldInform) <- atomically $ do
+        theirPieces <- readTVar peerPieces
+        ourPieces   <- readTVar handleOurPieces
+        let wanted = Set.difference theirPieces ourPieces
+            interested = not (Set.null wanted)
+        curr <- readTVar handleFriendship
+        writeTVar handleFriendship (curr { peerAmInterested = interested })
+        return (interested, peerAmInterested curr /= interested)
     when shouldInform $ do
         let msg = if interested then Interested else UnInterested
         sendMessage msg
