@@ -22,14 +22,17 @@ import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , newTBQueueIO
                                                 )
 import           Control.Exception.Safe         ( finally )
+import           Data.Maybe                     ( fromJust )
 import           Path                           ( Path
                                                 , Abs
                                                 , Dir
+                                                , (</>)
                                                 )
-
+import qualified Path
 import qualified Path.IO                       as Path
 
 import           Control.Logger                 ( LoggerHandle
+                                                , LoggerConfig(..)
                                                 , defaultLoggerConfig
                                                 , startLogger
                                                 )
@@ -97,7 +100,10 @@ launchClient file = do
             putStrLn "Failed to decode file:"
             putTextLn err
         Right meta -> do
-            (pid, logger) <- startLogger defaultLoggerConfig
+            thisDir <- Path.getCurrentDir
+            let logFile = thisDir </> fromJust (Path.parseRelFile "haze.log")
+                loggerConfig = defaultLoggerConfig { loggerFile = Just logFile }
+            (pid, logger) <- startLogger loggerConfig
             clientInfo    <- makeClientInfo meta logger
             runClientM startClient clientInfo `finally` cancel pid
 

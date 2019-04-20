@@ -28,10 +28,22 @@ import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , readTBQueue
                                                 , writeTBQueue
                                                 )
+import           Control.Exception.Safe         ( MonadThrow
+                                                , MonadCatch
+                                                , MonadMask
+                                                , finally
+                                                )
 import           Data.Time.Clock                ( UTCTime
                                                 , getCurrentTime
                                                 )
 import qualified Data.Text                     as Text
+import qualified Data.Text.IO                  as TIO
+import           Path                           ( Path
+                                                , Abs
+                                                , File
+                                                )
+import qualified Path
+import qualified System.IO                     as IO
 
 
 {- | Represents the importance of an event
@@ -69,21 +81,28 @@ data LoggerInfo = LoggerInfo
     , loggerISep :: !Text
     -- | Whether or not to log the time
     , loggerITime :: !Bool
+    -- | The handle we use to log to
+    , loggerIHandle :: !Handle
     }
 
 -- | Represents a computation that can log things
 newtype LoggerM a = LoggerM (ReaderT LoggerInfo IO a)
     deriving (Functor, Applicative, Monad,
-              MonadReader LoggerInfo, MonadIO
+              MonadReader LoggerInfo, MonadIO,
+              MonadThrow, MonadCatch, MonadMask
              )
 
 -- | Start a loop for the logger, where it will repeatedly log events
 loggerLoop :: LoggerM ()
-loggerLoop = forever $ do
+loggerLoop = (`finally` cleanup) . forever $ do
     info  <- ask
     event <- atomically $ readTBQueue (loggerIEvents info)
-    putText (makeLog info event)
+    liftIO $ TIO.hPutStr (loggerIHandle info) (makeLog info event)
   where
+    cleanup :: LoggerM ()
+    cleanup = do
+        handle <- asks loggerIHandle
+        liftIO $ IO.hClose handle
     makeLog :: LoggerInfo -> Event -> Text
     makeLog info (Event i time pairs) =
         let sep        = loggerISep info
@@ -100,11 +119,13 @@ data LoggerConfig = LoggerConfig
     , loggerTime :: !Bool
     -- | The size of the event buffer to keep
     , loggerBufSize :: !Int
+    -- | The file to log to potentially
+    , loggerFile :: !(Maybe (Path Abs File))
     }
 
 -- | A default value for the logger configuration
 defaultLoggerConfig :: LoggerConfig
-defaultLoggerConfig = LoggerConfig ", " True 4096
+defaultLoggerConfig = LoggerConfig ", " True 4096 Nothing
 
 {- | Start a logger with a given config
 
@@ -113,7 +134,9 @@ This will launch the logger in a thread that will die if the surrounding one doe
 startLogger :: LoggerConfig -> IO (Async (), LoggerHandle)
 startLogger LoggerConfig {..} = do
     q <- newTBQueueIO (fromIntegral loggerBufSize)
-    let info           = LoggerInfo q loggerSep loggerTime
+    let fp = Path.toFilePath <$> loggerFile
+    handle <- maybe (return IO.stdout) (`IO.openFile` IO.WriteMode) fp
+    let info           = LoggerInfo q loggerSep loggerTime handle
         (LoggerM loop) = loggerLoop
     pid <- async $ runReaderT loop info
     return (pid, LoggerHandle q)

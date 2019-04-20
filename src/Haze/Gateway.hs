@@ -200,7 +200,7 @@ doHandshake peer client sock = void . runMaybeT $ do
     lift $ logGateway
         Debug
         [ "msg" .= ("starting new peer" :: String)
-        , "peer" .= peer
+        , "peer" .= peerWithId
         , "self-initiated" .= client
         ]
     liftIO $ runPeerM startPeer peerMInfo
