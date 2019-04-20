@@ -14,8 +14,8 @@ module Haze.Peer
     , ParseCallBack
     , firstParseCallBack
     , parseMessages
-    , PeerMInfo
-    , makePeerMInfo
+    , PeerInfo
+    , makePeerInfo
     , PeerM
     , runPeerM
     , startPeer
@@ -247,96 +247,79 @@ choked. If the piece writer informs us that our current piece has been saved,
 then we can choose another current piece.
 -}
 
--- | Represents the state of p2p communication
-data PeerState = PeerState
-    { peerPieces :: !(Set Int) -- | The set of pieces this peer has
-    {- | What piece we might have already requested
-
-    We choose to download pieces reactively, so we need to know
-    if we've already downloaded a piece to avoid jumping on another one.
-    -}
-    , peerRequested :: !(Maybe Int)
-    -- | A set of blocks we shouldn't send off
-    , peerShouldCancel :: !(Set BlockIndex)
-    -- | Used to cancel if no messages are received
-    , peerKeepAlive :: !Bool
-    -- | Used to remember to notify the selector if our peer becomes interested
-    , peerWatched :: !Bool
-    -- | The socket connection for this peer
-    , peerSocket :: !Socket
-    }
-
--- | The peer state at the start of communication
-initialPeerState :: Socket -> PeerState
-initialPeerState =
-    PeerState Set.empty Nothing Set.empty True False
-
-
 {- | The information needed in a peer computation
 
 As opposed to PeerMState, the variables here can be shared with other
 sections of the code.
 -}
-data PeerMInfo = PeerMInfo
-    { peerMState :: !(TVar PeerState) -- ^ The local state
-    -- | The peer we're connected to
-    , peerMPeer :: !Peer
+data PeerInfo = PeerInfo
+    { peerPeer :: !Peer -- ^ the peer we're connected to
+    -- | The set of pieces this peer has
+    , peerPieces :: !(TVar (Set Int))
+    -- | The piece we're currently downloading
+    , peerRequested :: !(TVar (Maybe Int))
+    {- | A set of blocks we shouldn't send off
+
+    It's necessary to keep track of this since we request
+    pieces asynchronously from the piece writer.
+    -}
+    , peerShouldCancel :: !(TVar (Set BlockIndex))
+    -- | Used to cancel the connection if the peer dies off
+    , peerKeepAlive :: !(TVar Bool)
+    -- | Used to remember to notify the selector if our peer becomes interested
+    , peerWatched :: !(TVar Bool)
     -- | The logging handle
-    , peerMLogger :: !LoggerHandle
+    , peerLogger :: !LoggerHandle
     -- | A handle to the information shared with us
-    , peerMHandle :: !PeerHandle
+    , peerHandle :: !PeerHandle
+    -- | A socket we can communicate with the peer on
+    , peerSocket :: !Socket
     }
 
 -- | Construct new information that the peer needs
-makePeerMInfo :: MonadIO m => Socket -> Peer -> LoggerHandle -> PeerHandle -> m PeerMInfo
-makePeerMInfo sock peerMPeer peerMLogger peerMHandle = do
-    peerMState <- newTVarIO (initialPeerState sock)
-    return PeerMInfo {..}
+makePeerInfo :: MonadIO m => Socket -> Peer -> LoggerHandle -> PeerHandle -> m PeerInfo
+makePeerInfo peerSocket peerPeer peerLogger peerHandle = do
+    peerPieces <- newTVarIO Set.empty
+    peerRequested <- newTVarIO Nothing
+    peerShouldCancel <- newTVarIO Set.empty
+    peerKeepAlive <- newTVarIO True
+    peerWatched <- newTVarIO False
+    return PeerInfo {..}
 
 -- | Represents computations for a peer
-newtype PeerM a = PeerM (ReaderT PeerMInfo IO a)
+newtype PeerM a = PeerM (ReaderT PeerInfo IO a)
         deriving (Functor, Applicative, Monad,
-                  MonadIO, MonadThrow)
+                  MonadReader PeerInfo, MonadIO,
+                  MonadThrow)
 
-instance MonadReader PeerHandle PeerM where
-    ask = PeerM (asks peerMHandle)
-    local f (PeerM m ) = 
-        PeerM (local (\r -> r { peerMHandle = f (peerMHandle r)}) m)
-
-
-instance MonadState PeerState PeerM where
-    state f = do
-        stRef <- PeerM (asks peerMState)
-        atomically $ do
-            st <- readTVar stRef
-            let (a, st') = f st
-            writeTVar stRef st'
-            return a
+-- | Ask for a piece of the peer handle
+asksHandle :: (PeerHandle -> r) -> PeerM r
+asksHandle f = asks (f . peerHandle)
 
 instance HasPieceBuffer PeerM where
-    getPieceBuffer = asks handleBuffer
+    getPieceBuffer = asksHandle handleBuffer
 
 instance HasLogger PeerM where
-    getLogger = PeerM (asks peerMLogger)
+    getLogger = PeerM (asks peerLogger)
 
 -- | Log something with the source set as this peer
 logPeer :: Importance -> [(Text, Text)] -> PeerM ()
 logPeer i pairs = do
-    peer <- PeerM (asks peerMPeer)
+    peer <- PeerM (asks peerPeer)
     log i ("source" .= peer : pairs)
 
 -- | Get the total number of pieces
 getPieceCount :: PeerM Int
-getPieceCount = (+1) . snd . bounds <$> asks handlePieces
+getPieceCount = (+1) . snd . bounds <$> asksHandle handlePieces
 
 -- | Run a peer computation given the initial information it needs
-runPeerM :: PeerM a -> PeerMInfo -> IO a
+runPeerM :: PeerM a -> PeerInfo -> IO a
 runPeerM (PeerM rdr) = runReaderT rdr
 
 -- | Increment the upload count of our Status
 incrementTrackUp :: Integral a => a -> PeerM ()
 incrementTrackUp n = do
-    status <- asks handleStatus
+    status <- asksHandle handleStatus
     atomically $ modifyTVar' status increment
   where
     increment t@TrackStatus{..} = t { trackUp = trackUp + fromIntegral n}
@@ -344,7 +327,7 @@ incrementTrackUp n = do
 -- | Increment the download count of our Status
 incrementTrackDown :: Integral a => a -> PeerM ()
 incrementTrackDown n = do
-    status <- asks handleStatus
+    status <- asksHandle handleStatus
     atomically $ modifyTVar' status increment
   where
     increment t@TrackStatus{..} = t { trackDown = trackDown + fromIntegral n}
@@ -352,12 +335,12 @@ incrementTrackDown n = do
 -- | Modify our friendship atomically
 modifyFriendship :: (PeerFriendship -> PeerFriendship) -> PeerM ()
 modifyFriendship f = do
-    friendShip <- asks handleFriendship
+    friendShip <- asksHandle handleFriendship
     atomically (modifyTVar' friendShip f)
 
 -- | Get some information about our friendship
 askFriendship :: (PeerFriendship -> a) -> PeerM a
-askFriendship f = f <$> (asks handleFriendship >>= readTVarIO)
+askFriendship f = f <$> (asksHandle handleFriendship >>= readTVarIO)
 
 
 -- | Represents the different types of exceptions with a peer
@@ -385,11 +368,11 @@ message to the peer if our interest changes.
 -}
 adjustInterest :: PeerM ()
 adjustInterest = do
-    theirPieces <- gets peerPieces
-    ourPieces   <- readTVarIO =<< asks handleOurPieces
+    theirPieces <- readTVarIO =<< asks peerPieces
+    ourPieces   <- readTVarIO =<< asksHandle handleOurPieces
     let wanted = Set.difference theirPieces ourPieces
         interested = not (Set.null wanted)
-    friendship <- asks handleFriendship
+    friendship <- asksHandle handleFriendship
     shouldInform <- atomically $ do
         curr <- readTVar friendship
         writeTVar friendship (curr { peerAmInterested = interested })
@@ -402,19 +385,20 @@ adjustInterest = do
 -- | Add a piece locally, and increment it's global count.
 addPiece :: Int -> PeerM ()
 addPiece piece = do
-    pieces <- asks handlePieces
-    unless (inRange (bounds pieces) piece) cancel
-    atomically $ modifyTVar' (pieces ! piece) (+ 1)
-    modify (addLocalPiece piece)
-  where
-    addLocalPiece piece' ps =
-        let pieces = peerPieces ps
-        in  ps { peerPieces = Set.insert piece' pieces }
+    pieceCounts <- asksHandle handlePieces
+    unless (inRange (bounds pieceCounts) piece) cancel
+    ourPieces <- asks peerPieces
+    atomically $ do
+        pieces <- readTVar ourPieces
+        unless (Set.member piece pieces) $ do
+            let newPieces = Set.insert piece pieces
+            newPieces `seq` writeTVar ourPieces newPieces
+            modifyTVar' (pieceCounts ! piece) (+ 1)
 
 -- | Send a message to the peer connection
 sendMessage :: Message -> PeerM ()
 sendMessage msg = do
-    socket <- gets peerSocket
+    socket <- asks peerSocket
     pieceCount <- getPieceCount
     let bytes = encodeMessage pieceCount msg
     incrementTrackUp (BS.length bytes)
@@ -423,25 +407,28 @@ sendMessage msg = do
 -- | Send a message to the writer
 sendToWriter :: PeerToWriter -> PeerM ()
 sendToWriter msg = do
-    q <- asks handleToWriter
+    q <- asksHandle handleToWriter
     atomically $ writeTBQueue q msg
 
 
 -- | Modify our state based on a message, and send back a reply
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = doLog *> case msg of
-    KeepAlive -> modify (\ps -> ps { peerKeepAlive = True })
+    KeepAlive -> do
+        keepAlive <- asks peerKeepAlive
+        atomically $ writeTVar keepAlive True
     Choke     -> modifyFriendship (\f -> f { peerIsChoking = True })
     UnChoke   -> do
         modifyFriendship (\f -> f { peerIsChoking = False })
         requestRarestPiece
     Interested   -> do
+        PeerInfo{..} <- ask
+        let PeerHandle{..} = peerHandle
         modifyFriendship (\f -> f { peerIsInterested = True })
-        whenM (gets peerWatched) $ do
-            modify (\ps -> ps { peerWatched = False })
-            thisPeer <- asks handlePeer
-            q        <- asks handleToSelector
-            atomically $ writeTBQueue q (PeerBecameInterested thisPeer)
+        whenM (readTVarIO peerWatched) $ do
+            atomically $ do
+                writeTVar peerWatched False
+                writeTBQueue handleToSelector (PeerBecameInterested peerPeer)
     UnInterested -> modifyFriendship (\f -> f { peerIsInterested = False })
     Have piece   -> do
         addPiece piece
@@ -450,22 +437,21 @@ reactToMessage msg = doLog *> case msg of
         forM_ pieces addPiece
         jumpRarestIfFree
     Request info -> do
-        me <- asks handlePeer
+        me <- asks peerPeer
         let amChoking = askFriendship peerAmChoking
         unlessM amChoking (sendToWriter (PieceRequest me info))
     RecvBlock index bytes -> do
         writeBlockM index bytes
         sendToWriter PieceBufferWritten
-        whenJustM (gets peerRequested) request
+        whenJustM (asks peerRequested >>= readTVarIO) request
     Cancel (BlockInfo index _) -> do
-        toCancel <- gets peerShouldCancel
-        let toCancel' = Set.insert index toCancel
-        modify (\ps -> ps { peerShouldCancel = toCancel' })
+        PeerInfo{..} <- ask
+        atomically $ modifyTVar' peerShouldCancel (Set.insert index)
     Port _ -> return ()
   where
     jumpRarestIfFree = whenJustM getRarestPiece $ \next -> do
         sendMessage Interested
-        requested <- gets peerRequested
+        requested <- asks peerRequested >>= readTVarIO
         choking   <- askFriendship peerIsChoking
         case (choking, requested) of
             (False, Nothing) -> request next
@@ -476,19 +462,19 @@ reactToMessage msg = doLog *> case msg of
 reactToWriter :: WriterToPeer -> PeerM ()
 reactToWriter msg = case msg of
     PieceFulfilled index bytes -> do
-        shouldCancel <- gets peerShouldCancel
+        shouldCancel <- asks peerShouldCancel >>= readTVarIO
         unless (Set.member index shouldCancel)
             $ sendMessage (RecvBlock index bytes)
     PieceAcquired piece -> do
         sendMessage (Have piece)
-        requested <- gets peerRequested
+        requested <- asks peerRequested >>= readTVarIO
         choking   <- askFriendship peerIsChoking
         when (not choking && isNothing requested) requestRarestPiece
 
 -- | Loop and react to messages sent by the writer
 writerLoop :: PeerM ()
 writerLoop = forever $ do
-    chan <- asks handleFromWriter
+    chan <- asksHandle handleFromWriter
     msg  <- atomically $ readTBQueue chan
     reactToWriter msg
 
@@ -502,12 +488,14 @@ reactToSelector m = case m of
     PeerUnchoke -> do
         modifyFriendship (\f -> f { peerAmChoking = False })
         sendMessage UnChoke
-    PeerWatchForInterest -> modify (\ps -> ps { peerWatched = True })
+    PeerWatchForInterest -> do
+        PeerInfo{..} <- ask
+        atomically $ writeTVar peerWatched True
 
 -- | A loop handling messages from the manager
 selectorLoop :: PeerM ()
 selectorLoop = forever $ do
-    chan <- asks handleFromSelector
+    chan <- asksHandle handleFromSelector
     msg  <- atomically $ readTBQueue chan
     reactToSelector msg
 
@@ -515,9 +503,9 @@ selectorLoop = forever $ do
 -- | Get the rarest piece that the peer claims to have, and that we don't
 getRarestPiece :: PeerM (Maybe Int)
 getRarestPiece = do
-    theirPieces <- gets peerPieces
-    ourPieces   <- asks handleOurPieces >>= readTVarIO
-    pieceArr    <- asks handlePieces
+    theirPieces <- asks peerPieces >>= readTVarIO
+    ourPieces   <- asksHandle handleOurPieces >>= readTVarIO
+    pieceArr    <- asksHandle handlePieces
     let wantedPiece (i, _) =
             Set.member i (Set.difference theirPieces ourPieces)
     counts <- traverse getCount $ filter wantedPiece (assocs pieceArr)
@@ -534,9 +522,12 @@ we send a have message to the peer.
 request :: Int -> PeerM ()
 request piece = nextBlockM piece >>= \case
     Just info -> do
-        modify (\ps -> ps { peerRequested = Just piece })
+        PeerInfo{..} <- ask
+        atomically $ writeTVar peerRequested (Just piece)
         sendMessage (Request info)
-    Nothing -> modify (\ps -> ps { peerRequested = Nothing })
+    Nothing -> do
+        PeerInfo{..} <- ask
+        atomically $ writeTVar peerRequested Nothing
 
 -- | Try and request the rarest piece
 requestRarestPiece :: PeerM ()
@@ -549,12 +540,14 @@ The process reading messages from a socket should set `peerKeepAlive`
 to `True` when a message is received, to avoid this process cancelling.
 -}
 checkKeepAliveLoop :: PeerM ()
-checkKeepAliveLoop = do
+checkKeepAliveLoop = forever $ do
     liftIO . threadDelay $ 2 * 60 * 1_000_000
-    unlessM (gets peerKeepAlive) $ do
-        modify (\ps -> ps { peerKeepAlive = False })
-        checkKeepAliveLoop
-    cancel
+    PeerInfo{..} <- ask
+    continue <- atomically $ do
+        alive <- readTVar peerKeepAlive
+        writeTVar peerKeepAlive False
+        return alive
+    unless continue cancel
 
 {- | A loop for a process that sends a keep alive message every minute.
 
@@ -569,9 +562,9 @@ sendKeepAliveLoop = do
 -}
 recvLoop :: ParseCallBack -> PeerM ()
 recvLoop cb = do
-    socket <- gets peerSocket
+    socket <- asks peerSocket
     bytes  <- liftIO $ recv socket 1024
-    dlRate <- asks handleDLRate
+    dlRate <- asksHandle handleDLRate
     now    <- liftIO getCurrentTime
     let byteCount = BS.length bytes
         shiftRates = addDownload byteCount now

@@ -44,7 +44,7 @@ import           Control.Logger                 ( HasLogger(..)
                                                 , (.=)
                                                 , log
                                                 )
-import           Haze.Peer                      ( makePeerMInfo
+import           Haze.Peer                      ( makePeerInfo
                                                 , runPeerM
                                                 , startPeer
                                                 )
@@ -196,7 +196,7 @@ doHandshake peer client sock = void . runMaybeT $ do
     let peerWithId = peer { peerID = Just theirID }
     handle    <- MaybeT . fmap Just $ addPeer peerWithId
     logger    <- lift $ asks gatewayLogger
-    peerMInfo <- makePeerMInfo sock peer logger handle
+    peerMInfo <- makePeerInfo sock peer logger handle
     lift $ logGateway
         Debug
         [ "msg" .= ("starting new peer" :: String)
