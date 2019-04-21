@@ -378,7 +378,7 @@ sendMessage msg = do
     let bytes = encodeMessage pieceCount msg
     incrementTrackUp (BS.length bytes)
     liftIO $ sendAll socket bytes
-    logPeer DebugNoisy ["sent" .= PrettyMessage msg]
+    logPeer Noisy ["sent" .= PrettyMessage msg]
 
 -- | Send a message to the writer
 sendToWriter :: PeerToWriter -> PeerM ()
@@ -552,7 +552,7 @@ reactToMessage msg = doLog *> case msg of
         atomically $ modifyTVar' peerShouldCancel (Set.insert index)
     Port _ -> return ()
   where
-    doLog = logPeer DebugNoisy ["received" .= PrettyMessage msg]
+    doLog = logPeer Noisy ["received" .= PrettyMessage msg]
 
 -- | React to messages sent by the writer
 reactToWriter :: WriterToPeer -> PeerM ()

@@ -152,7 +152,7 @@ selectPeers = do
             let spec = fromJust $ HM.lookup peer peerMap
             friendship <- readTVarIO $ peerFriendship spec
             return (peerIsInterested friendship)
-    logSelector DebugNoisy ["sorted-peers" .= sortedPeers]
+    logSelector Noisy ["sorted-peers" .= sortedPeers]
     interestedPeers <- filterM (isInterested . fst) sortedPeers
     let bestRate = fromMaybe 0.0 . viaNonEmpty head $ map snd interestedPeers
         newDownloaders = HS.fromList . map fst $ take 4 interestedPeers

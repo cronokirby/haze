@@ -278,7 +278,7 @@ announceLoop = do
             return toAdd
         chosen  <- take allowed <$> shuffleM newPeers
         context <- ask
-        logGateway DebugNoisy ["chosen" .= chosen]
+        logGateway Noisy ["chosen" .= chosen]
         forM_ chosen $ \peer ->
             liftIO . void . async $ runGatewayM (connect peer) context
     connect :: Peer -> GatewayM ()

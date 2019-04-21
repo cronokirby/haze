@@ -51,7 +51,7 @@ import qualified System.IO                     as IO
 Can be used to not log events that are of a certain importance.
 -}
 data Importance
-    = DebugNoisy
+    = Noisy
     | Debug
     | Info
     | Error
