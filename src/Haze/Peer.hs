@@ -448,6 +448,11 @@ adjustRequested = do
                 return nextPiece
             else return Nothing
     whenJust maybePiece downloadMore
+    logInterest
+  where
+    logInterest = do
+        PeerFriendship {..} <- asks (handleFriendship . peerHandle) >>= readTVarIO
+        logPeer Noisy ["am-interested" .= peerAmInterested]
 
 {- | Clear our requested blocks entirely.
 
@@ -483,6 +488,12 @@ downloadMore piece = do
         writeTVar peerBlockQueue new
         return (filter (not . (`Set.member` current) . blockIndex) blockSet)
     forM_ added (sendMessage . Request)
+    logQueue
+  where
+    logQueue = do
+        PeerInfo {..} <- ask
+        blockQueue <- readTVarIO peerBlockQueue
+        logPeer Noisy ["queued" .= blockQueue]
 
 
 -- | Add a piece locally, and increment it's global count.
@@ -564,7 +575,9 @@ reactToWriter msg = case msg of
         adjustInterest
         atomically $ do
             requested <- readTVar peerRequested
-            when (requested == Just piece) $ writeTVar peerRequested Nothing
+            when (requested == Just piece) $ do
+                writeTVar peerRequested Nothing
+                writeTVar peerBlockQueue Set.empty
         adjustRequested
         requested <- readTVarIO peerRequested
         logPeer Noisy ["piece-acquired" .= piece, "piece-requested" .= requested]
