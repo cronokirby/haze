@@ -356,7 +356,7 @@ askFriendship f = f <$> (asksHandle handleFriendship >>= readTVarIO)
 -- | Represents the different types of exceptions with a peer
 data PeerException
     -- | The peer committed a fatal mistake in communication
-    = PeerMistakeException
+    = PeerMistakeException Text
     deriving (Show)
 
 instance Exception PeerException
@@ -366,8 +366,8 @@ instance Exception PeerException
 This simply throws an exception. And any cleanup should be done
 above.
 -}
-cancel :: PeerM ()
-cancel = throw PeerMistakeException
+cancel :: Text -> PeerM ()
+cancel = throw . PeerMistakeException
 
 -- | Send a message to the peer connection
 sendMessage :: Message -> PeerM ()
@@ -490,14 +490,15 @@ downloadMore piece = do
 addPiece :: Int -> PeerM ()
 addPiece piece = do
     pieceCounts <- asksHandle handlePieces
-    unless (inRange (bounds pieceCounts) piece) cancel
-    ourPieces <- asks peerPieces
-    atomically $ do
-        pieces <- readTVar ourPieces
-        unless (Set.member piece pieces) $ do
-            let newPieces = Set.insert piece pieces
-            newPieces `seq` writeTVar ourPieces newPieces
-            modifyTVar' (pieceCounts ! piece) (+ 1)
+    -- we can still continue if it's out of range
+    when (inRange (bounds pieceCounts) piece) $ do
+        ourPieces <- asks peerPieces
+        atomically $ do
+            pieces <- readTVar ourPieces
+            unless (Set.member piece pieces) $ do
+                let newPieces = Set.insert piece pieces
+                newPieces `seq` writeTVar ourPieces newPieces
+                modifyTVar' (pieceCounts ! piece) (+ 1)
 
 
 -- | Modify our state based on a message, and send back a reply
@@ -610,7 +611,7 @@ checkKeepAliveLoop = forever $ do
         alive <- readTVar peerKeepAlive
         writeTVar peerKeepAlive False
         return alive
-    unless continue cancel
+    unless continue (cancel "Peer didn't keep alive")
 
 {- | A loop for a process that sends a keep alive message every minute.
 
