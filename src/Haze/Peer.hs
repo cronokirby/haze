@@ -442,7 +442,7 @@ adjustRequested = do
                         Set.toList $ Set.difference theirPieces ourPieces
                     getCount p = (,) p <$> readTVar (handlePieces ! p)
                 rankedPieces <- traverse getCount newPieces
-                let sortedPieces = sortBy (flip compare `on` snd) rankedPieces
+                let sortedPieces = sortBy (compare `on` snd) rankedPieces
                     nextPiece    = case map fst sortedPieces of
                 -- This can never happen, because we're guaranteed to have at least
                 -- one new piece if we choose
@@ -568,6 +568,8 @@ reactToWriter msg = case msg of
             requested <- readTVar peerRequested
             when (requested == Just piece) $ writeTVar peerRequested Nothing
         adjustRequested
+        requested <- readTVarIO peerRequested
+        logPeer Noisy ["piece-acquired" .= piece, "piece-requested" .= requested]
 
 -- | Loop and react to messages sent by the writer
 writerLoop :: PeerM ()
