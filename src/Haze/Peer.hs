@@ -479,9 +479,11 @@ reactToMessage msg = doLog *> case msg of
         PeerInfo{..} <- ask
         let PeerHandle{..} = peerHandle
         modifyFriendship (\f -> f { peerIsInterested = True })
-        whenM (readTVarIO peerWatched) . atomically $ do
-            writeTVar peerWatched False
-            writeTBQueue handleToSelector (PeerBecameInterested peerPeer)
+        atomically $ do
+            watched <- readTVar peerWatched
+            when watched $ do
+                writeTVar peerWatched False
+                writeTBQueue handleToSelector (PeerBecameInterested peerPeer)
     UnInterested -> modifyFriendship (\f -> f { peerIsInterested = False })
     Have piece   -> do
         addPiece piece
