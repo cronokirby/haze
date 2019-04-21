@@ -45,7 +45,6 @@ import qualified Data.IntMap                   as IntMap
 import           Data.Ix                        ( inRange )
 import           Data.List                      ( (!!) )
 import qualified Data.Set                      as Set
-import           Data.Time.Clock                ( getCurrentTime )
 import           Network.Socket                 ( PortNumber
                                                 , Socket
                                                 )
@@ -630,9 +629,8 @@ recvLoop cb = do
     socket <- asks peerSocket
     bytes  <- liftIO $ recv socket 1024
     dlRate <- asksHandle handleDLRate
-    now    <- liftIO getCurrentTime
     let byteCount  = BS.length bytes
-        shiftRates = addDownload byteCount now
+        shiftRates = addDownload byteCount
     atomically $ modifyTVar' dlRate shiftRates
     incrementTrackDown byteCount
     case parseMessages cb bytes of

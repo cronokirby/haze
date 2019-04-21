@@ -19,12 +19,6 @@ where
 
 import           Relude
 
-import           Data.Sequence                  ( (<|)
-                                                , Seq(..)
-                                                , dropWhileR
-                                                )
-import qualified Data.Time.Clock               as Time
-
 
 -- | ByteCount is an Int, counting the number of bytes received over an interval
 type ByteCount = Int
@@ -36,43 +30,20 @@ The flow for using this type is to start off with
 until eventually calculating the recent rate with 'getRate',
 which will clean up old download stamps.
 -}
-newtype RateWindow = RateWindow (Seq (ByteCount, Time.UTCTime))
+newtype RateWindow = RateWindow ByteCount
 
 -- | an empty rate window
 emptyRateWindow :: RateWindow
-emptyRateWindow = RateWindow Empty
+emptyRateWindow = RateWindow 0
 
-{- | Get the download rate in a certain period from the current time.
-
-The first argument is the point from which to search back
-and calculate an average. The second is the window over which to look.
-
-This will clean up timestamps that are past this interval,
-so this is intended to be used with a consistent interval.
--}
-getRate
-    :: Time.UTCTime
-    -> Time.NominalDiffTime
-    -> RateWindow
-    -> (RateWindow, Double)
-getRate now size (RateWindow dls) =
-    let isOld time = Time.diffUTCTime now time > size
-        current = dropWhileR (\(_, time) -> isOld time) dls
-        rate    = case current of
-            Empty -> 0.0
-            (_ :|> (_, oldest)) ->
-                let fullCount = sum (fmap fst current)
-                    window    = Time.diffUTCTime now oldest
-                in  calcRate fullCount window
-    in  (RateWindow current, rate)
-  where
-    calcRate :: ByteCount -> Time.NominalDiffTime -> Double
-    calcRate count diff = fromRational (fromIntegral count / toRational diff)
+-- | Get the download rate over the period since we last checked
+getRate :: RateWindow -> (RateWindow, ByteCount)
+getRate (RateWindow count) = (RateWindow 0, count)
 
 {- | Add a new data point to the rate window.
 
 Note that the functions for this structure assume that
 the time for data points we add will only increase.
 -}
-addDownload :: ByteCount -> Time.UTCTime -> RateWindow -> RateWindow
-addDownload count time (RateWindow sq) = RateWindow ((count, time) <| sq)
+addDownload :: ByteCount -> RateWindow -> RateWindow
+addDownload count (RateWindow fullCount) = RateWindow $! count + fullCount

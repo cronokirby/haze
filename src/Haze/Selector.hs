@@ -29,9 +29,6 @@ import           Data.List                      ( (!!) )
 import           Data.Maybe                     ( fromJust )
 import qualified Data.HashMap.Strict           as HM
 import qualified Data.HashSet                  as HS
-import           Data.Time.Clock                ( UTCTime
-                                                , getCurrentTime
-                                                )
 import           System.Random                  ( randomRIO )
 
 import           Control.Logger                 ( HasLogger(..)
@@ -120,10 +117,10 @@ selectorLoop = do
                 selectLoop 0
             else selectLoop (n + 1)
 
-extractRate :: TVar RateWindow -> UTCTime -> STM Double
-extractRate var now = do
+extractRate :: TVar RateWindow -> STM Int
+extractRate var = do
     val <- readTVar var
-    let (newVal, rate) = getRate now 10 val
+    let (newVal, rate) = getRate val
     newVal `seq` writeTVar var newVal
     return rate
 
@@ -145,9 +142,8 @@ if they become interested, we boot our lowest of the 4 peers.
 selectPeers :: SelectorM ()
 selectPeers = do
     peerMap   <- asks (infoMap . selectorPeerInfo) >>= readTVarIO
-    now       <- liftIO getCurrentTime
     peerRates <- forM (HM.toList peerMap) $ \(peer, spec) -> do
-        rate <- atomically $ extractRate (peerDLRate spec) now
+        rate <- atomically $ extractRate (peerDLRate spec)
         return (peer, rate)
     let sortedPeers = sortBy (flip compare `on` snd) peerRates
         isInterested peer = do
@@ -156,7 +152,7 @@ selectPeers = do
             return (peerIsInterested friendship)
     logSelector Noisy ["sorted-peers" .= sortedPeers]
     interestedPeers <- filterM (isInterested . fst) sortedPeers
-    let bestRate = fromMaybe 0.0 . viaNonEmpty head $ map snd interestedPeers
+    let bestRate = fromMaybe 0 . viaNonEmpty head $ map snd interestedPeers
         newDownloaders = HS.fromList . map fst $ take 4 interestedPeers
         better =
             HS.fromList . map fst $ takeWhile ((> bestRate) . snd) sortedPeers
@@ -212,7 +208,6 @@ newDownloader :: Peer -> SelectorM ()
 newDownloader peer = do
     SelectorInfo {..} <- ask
     let PeerInfo {..} = selectorPeerInfo
-    now <- liftIO getCurrentTime
     atomically $ do
         peerMap     <- readTVar infoMap
         downloaders <- readTVar selectorDownloaders
@@ -226,7 +221,7 @@ newDownloader peer = do
             else do
                 rates <- forM (HS.toList downloaders) $ \pr -> do
                     let spec = fromJust $ HM.lookup peer peerMap
-                    rate <- extractRate (peerDLRate spec) now
+                    rate <- extractRate (peerDLRate spec)
                     return (pr, rate)
                 let worst =
                         fst . fromJust . viaNonEmpty head $ sortOn snd rates
