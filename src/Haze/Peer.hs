@@ -81,7 +81,7 @@ import           Haze.PieceBuffer               ( BlockInfo(..)
                                                 , BlockIndex(..)
                                                 , makeBlockInfo
                                                 , HasPieceBuffer(..)
-                                                , takeBlocksM
+                                                , takeBlocks
                                                 , writeBlockM
                                                 )
 import           Haze.Tracker                   ( Peer
@@ -272,6 +272,8 @@ data PeerInfo = PeerInfo
     pieces asynchronously from the piece writer.
     -}
     , peerShouldCancel :: !(TVar (Set BlockIndex))
+    -- | The set of blocks for which we have an ongoing request
+    , peerBlockQueue :: !(TVar (Set BlockIndex))
     -- | Used to cancel the connection if the peer dies off
     , peerKeepAlive :: !(TVar Bool)
     -- | Used to remember to notify the selector if our peer becomes interested
@@ -291,6 +293,7 @@ makePeerInfo peerSocket peerPeer peerLogger peerHandle = do
     peerPieces       <- newTVarIO Set.empty
     peerRequested    <- newTVarIO Nothing
     peerShouldCancel <- newTVarIO Set.empty
+    peerBlockQueue   <- newTVarIO Set.empty
     peerKeepAlive    <- newTVarIO True
     peerWatched      <- newTVarIO False
     return PeerInfo { .. }
@@ -427,8 +430,8 @@ adjustRequested = do
                 rankedPieces <- traverse getCount newPieces
                 let sortedPieces = sortBy (flip compare `on` snd) rankedPieces
                     nextPiece    = case map fst sortedPieces of
-                    -- This can never happen, because we're guaranteed to have at least
-                    -- one new piece if we choose
+                -- This can never happen, because we're guaranteed to have at least
+                -- one new piece if we choose
                         []     -> error "impossible chosen piece"
                         [x]    -> Just x
                         [x, _] -> Just x
@@ -437,9 +440,41 @@ adjustRequested = do
                 return nextPiece
             else return Nothing
     whenJust maybePiece downloadMore
-  where
-    downloadMore :: Int -> PeerM ()
-    downloadMore piece = undefined
+
+{- | Clear our requested blocks entirely.
+
+This should be used when the peer chokes us, that
+way when they unchoke us we select from scratch.
+-}
+clearRequested :: PeerM ()
+clearRequested = do
+    PeerInfo {..} <- ask
+    atomically $ do
+        writeTVar peerRequested Nothing
+        writeTVar peerBlockQueue Set.empty
+
+{- | Continue downloading blocks in a piece.
+
+By default this will try and always have 5 queued requests.
+-}
+downloadMore :: Int -> PeerM ()
+downloadMore piece = do
+    PeerInfo {..} <- ask
+    let PeerHandle {..} = peerHandle
+    added <- atomically $ do
+        buf     <- readTVar handleBuffer
+        current <- readTVar peerBlockQueue
+        let toTake         = 5 - Set.size current -- shouldn't be negative
+            (blocks, buf') = takeBlocks toTake piece buf
+        buf' `seq` writeTVar handleBuffer buf'
+        -- We don't react specifically to nothing,
+        -- since we handle that when reacting to the pieceWriter
+        let blockSet = fromMaybe [] blocks
+            indexSet = Set.fromList (map blockIndex blockSet)
+            new      = Set.union current indexSet
+        writeTVar peerBlockQueue new
+        return (filter (not . (`Set.member` current) . blockIndex) blockSet)
+    forM_ added (sendMessage . Request)
 
 
 -- | Add a piece locally, and increment it's global count.
@@ -477,7 +512,9 @@ reactToMessage msg = doLog *> case msg of
     KeepAlive -> do
         keepAlive <- asks peerKeepAlive
         atomically $ writeTVar keepAlive True
-    Choke   -> modifyFriendship (\f -> f { peerIsChoking = True })
+    Choke   -> do
+        modifyFriendship (\f -> f { peerIsChoking = True })
+        clearRequested
     UnChoke -> do
         modifyFriendship (\f -> f { peerIsChoking = False })
         adjustRequested
@@ -504,21 +541,17 @@ reactToMessage msg = doLog *> case msg of
         let amChoking = askFriendship peerAmChoking
         unlessM amChoking (sendToWriter (PieceRequest me info))
     RecvBlock index bytes -> do
-        writeBlockM index bytes
-        sendToWriter PieceBufferWritten
-        whenJustM (asks peerRequested >>= readTVarIO) request
+        requested <- asks peerRequested >>= readTVarIO
+        let piece = blockPiece index
+        when (Just piece == requested) $ do
+            writeBlockM index bytes
+            sendToWriter PieceBufferWritten
+            downloadMore piece
     Cancel (BlockInfo index _) -> do
         PeerInfo {..} <- ask
         atomically $ modifyTVar' peerShouldCancel (Set.insert index)
     Port _ -> return ()
   where
-    jumpRarestIfFree = whenJustM getRarestPiece $ \next -> do
-        sendMessage Interested
-        requested <- asks peerRequested >>= readTVarIO
-        choking   <- askFriendship peerIsChoking
-        case (choking, requested) of
-            (False, Nothing) -> request next
-            (_    , _      ) -> return ()
     doLog = logPeer DebugNoisy ["msg" .= PrettyMessage msg]
 
 -- | React to messages sent by the writer
@@ -564,40 +597,6 @@ selectorLoop = forever $ do
     chan <- asksHandle handleFromSelector
     msg  <- atomically $ readTBQueue chan
     reactToSelector msg
-
-
--- | Get the rarest piece that the peer claims to have, and that we don't
-getRarestPiece :: PeerM (Maybe Int)
-getRarestPiece = do
-    theirPieces <- asks peerPieces >>= readTVarIO
-    ourPieces   <- asksHandle handleOurPieces >>= readTVarIO
-    pieceArr    <- asksHandle handlePieces
-    let wantedPiece (i, _) =
-            Set.member i (Set.difference theirPieces ourPieces)
-    counts <- traverse getCount $ filter wantedPiece (assocs pieceArr)
-    -- TODO: randomise this somewhat
-    return . fmap fst . viaNonEmpty head $ sortOn snd counts
-    where getCount (i, var) = (,) i <$> readTVarIO var
-
-{- | Send a request for a particular piece.
-
-This will sometimes do nothing if no further blocks are available for that
-piece. The time to switch to requesting a different piece is when
-we send a have message to the peer.
--}
-request :: Int -> PeerM ()
-request piece = takeBlocksM 1 piece >>= \case
-    Just [info] -> do
-        PeerInfo {..} <- ask
-        atomically $ writeTVar peerRequested (Just piece)
-        sendMessage (Request info)
-    Nothing -> do
-        PeerInfo {..} <- ask
-        atomically $ writeTVar peerRequested Nothing
-
--- | Try and request the rarest piece
-requestRarestPiece :: PeerM ()
-requestRarestPiece = whenJustM getRarestPiece request
 
 
 {- | A loop for a process that will kill the peer if messages aren't received
