@@ -336,7 +336,7 @@ makePieceWriterInfo pieceInfo pieceLogger fileInfo shaPieces root = do
         pieceStructure = makeFileStructure pieceMapping
     -- make sure the directory we're saving to exists
     case fileInfo of
-        SingleFile _ -> return ()
+        SingleFile _ -> Path.ensureDir root
         MultiFile relRoot _ -> Path.ensureDir (root </> relRoot)
     return PieceWriterInfo { .. }
 
