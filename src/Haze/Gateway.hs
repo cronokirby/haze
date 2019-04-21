@@ -205,7 +205,7 @@ doHandshake peer client sock = void . runMaybeT $ do
         , "self-initiated" .= client
         ]
     liftIO $ runPeerM startPeer peerMInfo
-    removePeer peerWithId
+    lift $ removePeer peerWithId
   where
     sendHeader :: MaybeT GatewayM ()
     sendHeader = lift $ do
