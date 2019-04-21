@@ -43,7 +43,6 @@ import qualified Data.ByteString.Char8         as BS
 import           Data.Ix                        ( Ix
                                                 , inRange
                                                 )
-import           Data.Maybe                     ( fromJust )
 
 import           Haze.Tracker                   ( SHAPieces(..)
                                                 , MetaInfo(..)

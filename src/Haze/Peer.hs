@@ -44,6 +44,7 @@ import qualified Data.Bits                     as Bits
 import qualified Data.ByteString               as BS
 import qualified Data.IntMap                   as IntMap
 import           Data.Ix                        ( inRange )
+import           Data.List                      ( (!!) )
 import qualified Data.Set                      as Set
 import           Data.Time.Clock                ( getCurrentTime )
 import           Network.Socket                 ( PortNumber
@@ -52,6 +53,7 @@ import           Network.Socket                 ( PortNumber
 import           Network.Socket.ByteString      ( recv
                                                 , sendAll
                                                 )
+import           System.Random                  ( randomRIO )
 import qualified Text.Show
 
 import           Data.RateWindow                ( addDownload )
@@ -381,6 +383,57 @@ adjustInterest = do
     when shouldInform $ do
         let msg = if interested then Interested else UnInterested
         sendMessage msg
+
+{- | Recalculate which piece we should request next.
+
+If we jump to a new piece, then we'll automically set up
+the block requests.
+
+We jump to a new piece if we don't currently have one,
+we're currently interested, and we're not being choked.
+If we're currently interested, there must be a rarest piece
+we can request.
+
+This should be called when our interest changes, or our choking
+changes. To handle the case where the piece we've been working
+on has been saved, we should first clear our current piece request
+before calling this function.
+-}
+adjustRequested :: PeerM ()
+adjustRequested = do
+    PeerInfo{..} <- ask
+    let PeerHandle{..} = peerHandle
+    shouldRequest <- atomically $ do
+        PeerFriendship{..} <- readTVar handleFriendship
+        noRequest          <- isNothing <$> readTVar peerRequested
+        return (peerAmInterested && not peerIsChoking && noRequest)
+    when shouldRequest $ do
+        piece <- choosePiece
+        atomically $ writeTVar peerRequested (Just piece)
+        downloadMore piece
+  where
+    choosePiece :: PeerM Int
+    choosePiece = do
+        PeerInfo{..} <- ask
+        let PeerHandle{..} = peerHandle
+        -- We choose which of the 3 rarest in advance
+        slot <- liftIO $ randomRIO (0, 2)
+        atomically $ do
+            theirPieces <- readTVar peerPieces
+            ourPieces   <- readTVar handleOurPieces
+            let newPieces = Set.toList $ Set.difference theirPieces ourPieces
+                getCount p = (,) p <$> readTVar (handlePieces ! p)
+            rankedPieces <- traverse getCount newPieces
+            let sortedPieces = sortBy (flip compare `on` snd) rankedPieces
+            case map fst sortedPieces of
+                -- This can never happen, because we're guaranteed to have at least
+                -- one new piece if we choose
+                []     -> error "impossible piece chosen"
+                [x]    -> return x
+                [x, _] -> return x
+                enough -> return (enough !! slot)
+    downloadMore :: Int -> PeerM ()
+    downloadMore piece = undefined
 
 
 -- | Add a piece locally, and increment it's global count.
