@@ -503,10 +503,8 @@ addPiece piece = do
 
 -- | Modify our state based on a message, and send back a reply
 reactToMessage :: Message -> PeerM ()
-reactToMessage msg = doLog *> case msg of
-    KeepAlive -> do
-        keepAlive <- asks peerKeepAlive
-        atomically $ writeTVar keepAlive True
+reactToMessage msg = always *> case msg of
+    KeepAlive -> return ()
     Choke   -> do
         modifyFriendship (\f -> f { peerIsChoking = True })
         clearRequested
@@ -549,7 +547,10 @@ reactToMessage msg = doLog *> case msg of
         atomically $ modifyTVar' peerShouldCancel (Set.insert index)
     Port _ -> return ()
   where
-    doLog = logPeer Noisy ["received" .= PrettyMessage msg]
+    always = do
+        keepAlive <- asks peerKeepAlive
+        atomically $ writeTVar keepAlive True
+        logPeer Noisy ["received" .= PrettyMessage msg]
 
 -- | React to messages sent by the writer
 reactToWriter :: WriterToPeer -> PeerM ()
