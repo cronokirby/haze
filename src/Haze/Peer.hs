@@ -474,7 +474,7 @@ reactToMessage msg = doLog *> case msg of
     Choke     -> modifyFriendship (\f -> f { peerIsChoking = True })
     UnChoke   -> do
         modifyFriendship (\f -> f { peerIsChoking = False })
-        requestRarestPiece
+        adjustRequested
     Interested   -> do
         PeerInfo{..} <- ask
         let PeerHandle{..} = peerHandle
@@ -488,11 +488,11 @@ reactToMessage msg = doLog *> case msg of
     Have piece   -> do
         addPiece piece
         adjustInterest
-        jumpRarestIfFree
+        adjustRequested
     BitField pieces -> do
         forM_ pieces addPiece
         adjustInterest
-        jumpRarestIfFree
+        adjustRequested
     Request info -> do
         me <- asks peerPeer
         let amChoking = askFriendship peerAmChoking
@@ -523,11 +523,14 @@ reactToWriter msg = case msg of
         unless (Set.member index shouldCancel)
             $ sendMessage (RecvBlock index bytes)
     PieceAcquired piece -> do
+        PeerInfo{..} <- ask
         sendMessage (Have piece)
         adjustInterest
-        requested <- asks peerRequested >>= readTVarIO
-        choking   <- askFriendship peerIsChoking
-        when (not choking && isNothing requested) requestRarestPiece
+        atomically $ do
+            requested <- readTVar peerRequested
+            when (requested == Just piece) $
+                writeTVar peerRequested Nothing
+        adjustRequested
 
 -- | Loop and react to messages sent by the writer
 writerLoop :: PeerM ()
