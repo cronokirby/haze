@@ -159,6 +159,8 @@ selectPeers = do
         better =
             HS.fromList . map fst $ takeWhile ((> bestRate) . snd) sortedPeers
         newWatched = HS.difference better newDownloaders
+    logSelector Noisy ["new-downloaders" .= newDownloaders]
+    logSelector Noisy ["new-watched" .= newWatched]
     downloaders  <- asks selectorDownloaders
     uninterested <- asks selectorUninterested
     atomically $ do
