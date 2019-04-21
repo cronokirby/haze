@@ -1,5 +1,6 @@
 {-# LANGUAGE  GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE  NumericUnderscores         #-}
+{-# LANGUAGE  RecordWildCards            #-}
 {- |
 Description: contains the component that chokes and unchokes peers
 
@@ -28,7 +29,9 @@ import           Data.List                      ( (!!) )
 import           Data.Maybe                     ( fromJust )
 import qualified Data.HashMap.Strict           as HM
 import qualified Data.HashSet                  as HS
-import           Data.Time.Clock                ( getCurrentTime )
+import           Data.Time.Clock                ( UTCTime
+                                                , getCurrentTime
+                                                )
 import           System.Random                  ( randomRIO )
 
 import           Control.Logger                 ( HasLogger(..)
@@ -117,14 +120,12 @@ selectorLoop = do
                 selectLoop 0
             else selectLoop (n + 1)
 
-extractRate :: MonadIO m => TVar RateWindow -> m Double
-extractRate var = do
-    now <- liftIO getCurrentTime
-    atomically $ do
-        val <- readTVar var
-        let (newVal, rate) = getRate now 10 val
-        newVal `seq` writeTVar var newVal
-        return rate
+extractRate :: TVar RateWindow -> UTCTime -> STM Double
+extractRate var now = do
+    val <- readTVar var
+    let (newVal, rate) = getRate now 10 val
+    newVal `seq` writeTVar var newVal
+    return rate
 
 sendToPeer :: HM.HashMap Peer PeerSpecific -> SelectorToPeer -> Peer -> STM ()
 sendToPeer mp msg peer = do
@@ -144,8 +145,9 @@ if they become interested, we boot our lowest of the 4 peers.
 selectPeers :: SelectorM ()
 selectPeers = do
     peerMap   <- asks (infoMap . selectorPeerInfo) >>= readTVarIO
+    now       <- liftIO getCurrentTime
     peerRates <- forM (HM.toList peerMap) $ \(peer, spec) -> do
-        rate <- extractRate (peerDLRate spec)
+        rate <- atomically $ extractRate (peerDLRate spec) now
         return (peer, rate)
     let sortedPeers = sortBy (flip compare `on` snd) peerRates
         isInterested peer = do
@@ -208,27 +210,29 @@ worst downloader with it.
 -}
 newDownloader :: Peer -> SelectorM ()
 newDownloader peer = do
-    peerMap     <- readTVarIO =<< asks (infoMap . selectorPeerInfo)
-    dldrsVar    <- asks selectorDownloaders
-    downloaders <- readTVarIO dldrsVar
-    watchedVar  <- asks selectorUninterested
-    watched     <- readTVarIO watchedVar
-    if HS.size downloaders < 4
-        then do
-            let newDownloaders = HS.insert peer downloaders
-                newWatched     = HS.delete peer watched
-            atomically $ do
-                writeTVar dldrsVar   newDownloaders
-                writeTVar watchedVar newWatched
-        else do
-            rates <- forM (HS.toList downloaders) $ \pr -> do
-                let spec = fromJust $ HM.lookup peer peerMap
-                rate <- extractRate (peerDLRate spec)
-                return (pr, rate)
-            let worst = fst . fromJust . viaNonEmpty head $ sortOn snd rates
-                newDownloaders = downloaders & HS.delete worst & HS.insert peer
-                newWatched = HS.delete peer watched
-            atomically $ do
+    SelectorInfo {..} <- ask
+    let PeerInfo {..} = selectorPeerInfo
+    now <- liftIO getCurrentTime
+    atomically $ do
+        peerMap     <- readTVar infoMap
+        downloaders <- readTVar selectorDownloaders
+        watched     <- readTVar selectorUninterested
+        if HS.size downloaders < 4
+            then do
+                let newDownloaders = HS.insert peer downloaders
+                    newWatched     = HS.delete peer watched
+                writeTVar selectorDownloaders  newDownloaders
+                writeTVar selectorUninterested newWatched
+            else do
+                rates <- forM (HS.toList downloaders) $ \pr -> do
+                    let spec = fromJust $ HM.lookup peer peerMap
+                    rate <- extractRate (peerDLRate spec) now
+                    return (pr, rate)
+                let worst =
+                        fst . fromJust . viaNonEmpty head $ sortOn snd rates
+                    newDownloaders =
+                        downloaders & HS.delete worst & HS.insert peer
+                    newWatched = HS.delete peer watched
                 sendToPeer peerMap PeerChoke worst
-                writeTVar dldrsVar   newDownloaders
-                writeTVar watchedVar newWatched
+                writeTVar selectorDownloaders  newDownloaders
+                writeTVar selectorUninterested newWatched
