@@ -427,9 +427,10 @@ adjustRequested :: PeerM ()
 adjustRequested = do
     PeerInfo {..} <- ask
     let PeerHandle {..} = peerHandle
-    -- We choose which of the 3 rarest in advance
+        amount = 10
+    -- We choose which of the N rarest in advance
     -- We have to do this in case we end up choosing a piece
-    slot       <- liftIO $ randomRIO (0, 2)
+    slot       <- liftIO $ randomRIO (0, amount)
     maybePiece <- atomically $ do
         PeerFriendship {..} <- readTVar handleFriendship
         noRequest           <- isNothing <$> readTVar peerRequested
@@ -438,18 +439,12 @@ adjustRequested = do
             then do
                 theirPieces <- readTVar peerPieces
                 ourPieces   <- readTVar handleOurPieces
-                let newPieces =
-                        Set.toList $ Set.difference theirPieces ourPieces
+                let newPieces = Set.difference theirPieces ourPieces
+                    newPieceCount = Set.size newPieces
                     getCount p = (,) p <$> readTVar (handlePieces ! p)
-                rankedPieces <- traverse getCount newPieces
-                let sortedPieces = sortBy (compare `on` snd) rankedPieces
-                    nextPiece    = case map fst sortedPieces of
-                -- This can never happen, because we're guaranteed to have at least
-                -- one new piece if we choose
-                        []     -> error "impossible chosen piece"
-                        [x]    -> Just x
-                        [x, _] -> Just x
-                        enough -> Just (enough !! slot)
+                rankedPieces <- traverse getCount (Set.toList newPieces)
+                let sortedPieces = map fst $ sortBy (compare `on` snd) rankedPieces
+                    nextPiece    = Just (sortedPieces !! (slot `mod` newPieceCount))
                 writeTVar peerRequested nextPiece
                 return nextPiece
             else return Nothing
@@ -469,7 +464,7 @@ clearRequested = do
 
 {- | Continue downloading blocks in a piece.
 
-By default this will try and always have 5 queued requests.
+By default this will try and always have 10 queued requests.
 -}
 downloadMore :: Int -> PeerM ()
 downloadMore piece = do
@@ -478,7 +473,7 @@ downloadMore piece = do
     added <- atomically $ do
         buf     <- readTVar handleBuffer
         current <- readTVar peerBlockQueue
-        let toTake         = 5 - Set.size current -- shouldn't be negative
+        let toTake         = 10 - Set.size current -- shouldn't be negative
             (blocks, buf') = takeBlocks toTake piece buf
         buf' `seq` writeTVar handleBuffer buf'
         -- We don't react specifically to nothing,
