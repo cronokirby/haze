@@ -14,5 +14,5 @@ runHaze :: IO ()
 runHaze = do
     args <- getArgs
     case args of
-        []       -> putStrLn "Please give me a file"
-        file : _ -> launchClient file
+        file : dir : _ -> launchClient file dir
+        _       -> putStrLn "Please give me a file and a directory"

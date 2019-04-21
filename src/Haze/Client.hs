@@ -75,10 +75,10 @@ data ClientInfo = ClientInfo
     }
 
 -- | Make client information given a torrent file
-makeClientInfo :: MonadIO m => MetaInfo -> LoggerHandle -> m ClientInfo
-makeClientInfo clientMeta clientLogger = do
-    clientPeerInfo         <- makeEmptyPeerInfo clientMeta
-    clientRoot             <- Path.getCurrentDir
+makeClientInfo :: MonadIO m => MetaInfo -> FilePath -> LoggerHandle -> m ClientInfo
+makeClientInfo clientMeta dir clientLogger = do
+    clientPeerInfo <- makeEmptyPeerInfo clientMeta
+    let clientRoot = fromJust (Path.parseAbsDir dir)
     clientAnnouncerResults <- liftIO $ newTBQueueIO 16
     return ClientInfo { .. }
 
@@ -92,8 +92,8 @@ runClientM :: ClientM a -> ClientInfo -> IO a
 runClientM (ClientM m) = runReaderT m
 
 -- | Launch a client given a file path from which to start
-launchClient :: FilePath -> IO ()
-launchClient file = do
+launchClient :: FilePath -> FilePath -> IO ()
+launchClient file dir = do
     bytes <- readFileBS file
     case metaFromBytes bytes of
         Left (DecodeError err) -> do
@@ -105,7 +105,7 @@ launchClient file = do
                 loggerConfig =
                     defaultLoggerConfig { loggerFile = Just logFile }
             (pid, logger) <- startLogger loggerConfig
-            clientInfo    <- makeClientInfo meta logger
+            clientInfo    <- makeClientInfo meta dir logger
             runClientM startClient clientInfo `finally` cancel pid
 
 startClient :: ClientM ()
