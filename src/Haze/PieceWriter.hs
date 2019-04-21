@@ -55,6 +55,12 @@ import           System.IO                      ( Handle
                                                 , hSeek
                                                 )
 
+import           Control.Logger                 ( HasLogger(..)
+                                                , LoggerHandle
+                                                , Importance(..)
+                                                , (.=)
+                                                , log
+                                                )
 import           Haze.Messaging                 ( PeerToWriter(..)
                                                 , WriterToPeer(..)
                                                 )
@@ -306,7 +312,8 @@ access to 'PeerInfo'.
 data PieceWriterInfo = PieceWriterInfo
     { pieceStructure :: !FileStructure
     , pieceMapping :: !PieceMapping
-    , peerInfo :: !PeerInfo
+    , pieceLogger :: !LoggerHandle
+    , pieceInfo :: !PeerInfo
     }
 
 {- | Construct the information a piece writer needs.
@@ -315,25 +322,38 @@ We need the peer information, as well as the necessary information
 to construct the plans for saving pieces.
 -}
 makePieceWriterInfo
-    :: PeerInfo -> FileInfo -> SHAPieces -> AbsDir -> PieceWriterInfo
-makePieceWriterInfo info fileInfo shaPieces root =
-    let mapping   = makeMapping fileInfo shaPieces root
-        structure = makeFileStructure mapping
-    in  PieceWriterInfo structure mapping info
+    :: PeerInfo
+    -> LoggerHandle
+    -> FileInfo
+    -> SHAPieces
+    -> AbsDir
+    -> PieceWriterInfo
+makePieceWriterInfo pieceInfo pieceLogger fileInfo shaPieces root =
+    let pieceMapping   = makeMapping fileInfo shaPieces root
+        pieceStructure = makeFileStructure pieceMapping
+    in  PieceWriterInfo { .. }
 
 -- | A context with access to what a piece writer process needs
 newtype PieceWriterM a = PieceWriterM (ReaderT PieceWriterInfo IO a)
     deriving (Functor, Applicative, Monad, MonadReader PieceWriterInfo, MonadIO)
 
 instance HasPeerInfo PieceWriterM where
-    getPeerInfo = asks peerInfo
+    getPeerInfo = asks pieceInfo
 
 instance HasPieceBuffer PieceWriterM where
-    getPieceBuffer = asks (infoBuffer . peerInfo)
+    getPieceBuffer = asks (infoBuffer . pieceInfo)
+
+instance HasLogger PieceWriterM where
+    getLogger = asks pieceLogger
 
 -- | Run a piece writer function given the right context
 runPieceWriterM :: PieceWriterM a -> PieceWriterInfo -> IO a
 runPieceWriterM (PieceWriterM r) = runReaderT r
+
+-- | Log something with the source as the piece writer
+logPieceWriter :: Importance -> [(Text, Text)] -> PieceWriterM ()
+logPieceWriter i pairs = log i ("source" .= ("piece-writer" :: String) : pairs)
+
 
 -- | Lookup and write the pieces in a pieceBuff
 writePiecesM :: PieceWriterM ()
@@ -342,8 +362,9 @@ writePiecesM = do
     info   <- asks pieceStructure
     writePieces info pieces
     let pieceSet = Set.fromList $ map fst pieces
+    logNewPieces pieceSet
     forM_ pieceSet $ sendWriterToAll . PieceAcquired
-    ourPieces <- asks (infoOurPieces . peerInfo)
+    ourPieces <- asks (infoOurPieces . pieceInfo)
     atomically $ modifyTVar' ourPieces (Set.union pieceSet)
     let savedCount = sum $ map (BS.length . snd) pieces
     status <- infoStatus <$> getPeerInfo
@@ -352,6 +373,11 @@ writePiecesM = do
     -- Since we never save a piece twice, this should stay >= 0
     updateLeft saved t@TrackStatus {..} =
         t { trackLeft = trackLeft - fromIntegral saved }
+    logNewPieces pieceSet
+        | Set.null pieceSet = logPieceWriter
+            Debug
+            ["msg" .= ("checked, but no new pieces" :: String)]
+        | otherwise = logPieceWriter Info ["new-pieces" .= pieceSet]
 
 
 pieceWriterLoop :: PieceWriterM ()
