@@ -51,6 +51,7 @@ import           Haze.Peer                      ( makePeerInfo
 import           Haze.PeerInfo                  ( PeerInfo(..)
                                                 , HasPeerInfo(..)
                                                 , addPeer
+                                                , removePeer
                                                 )
 import           Haze.Tracker                   ( AnnounceInfo(..)
                                                 , MetaInfo(..)
@@ -204,6 +205,7 @@ doHandshake peer client sock = void . runMaybeT $ do
         , "self-initiated" .= client
         ]
     liftIO $ runPeerM startPeer peerMInfo
+    removePeer peerWithId
   where
     sendHeader :: MaybeT GatewayM ()
     sendHeader = lift $ do

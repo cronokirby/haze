@@ -18,6 +18,7 @@ module Haze.PeerInfo
     , makeEmptyPeerInfo
     , HasPeerInfo(..)
     , addPeer
+    , removePeer
     , sendWriterToPeer
     , sendWriterToAll
     , recvToWriter
@@ -202,6 +203,13 @@ addPeer newPeer = do
     newVal <- makePeerSpecific
     atomically $ modifyTVar' mapVar (HM.insert newPeer newVal)
     return (makeHandle newVal info newPeer)
+
+-- | Remove a peer from the map
+removePeer :: (MonadIO m, HasPeerInfo m) => Peer -> m ()
+removePeer peer = do
+    PeerInfo{..} <- getPeerInfo
+    atomically $ modifyTVar' infoMap (HM.delete peer)
+
 
 sendWriterMsg :: MonadIO m => WriterToPeer -> PeerSpecific -> m ()
 sendWriterMsg msg specific =
