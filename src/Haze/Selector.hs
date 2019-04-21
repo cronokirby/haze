@@ -164,8 +164,8 @@ selectPeers = do
     atomically $ do
         writeTVar downloaders  newDownloaders
         writeTVar uninterested newWatched
-        forM_ newDownloaders (sendToPeer peerMap PeerUnchoke)
-        forM_ newWatched     (sendToPeer peerMap PeerWatchForInterest)
+    forM_ newDownloaders (atomically . sendToPeer peerMap PeerUnchoke)
+    forM_ newWatched     (atomically . sendToPeer peerMap PeerWatchForInterest)
 
 
 {- | Select a new peer to unchoke optimistically.
@@ -208,7 +208,7 @@ newDownloader :: Peer -> SelectorM ()
 newDownloader peer = do
     SelectorInfo {..} <- ask
     let PeerInfo {..} = selectorPeerInfo
-    atomically $ do
+    res <- atomically $ do
         peerMap     <- readTVar infoMap
         downloaders <- readTVar selectorDownloaders
         watched     <- readTVar selectorUninterested
@@ -218,6 +218,7 @@ newDownloader peer = do
                     newWatched     = HS.delete peer watched
                 writeTVar selectorDownloaders  newDownloaders
                 writeTVar selectorUninterested newWatched
+                return Nothing
             else do
                 rates <- forM (HS.toList downloaders) $ \pr -> do
                     let spec = fromJust $ HM.lookup peer peerMap
@@ -228,6 +229,9 @@ newDownloader peer = do
                     newDownloaders =
                         downloaders & HS.delete worst & HS.insert peer
                     newWatched = HS.delete peer watched
-                sendToPeer peerMap PeerChoke worst
                 writeTVar selectorDownloaders  newDownloaders
                 writeTVar selectorUninterested newWatched
+                return (Just (peerMap, worst))
+    whenJust res $ \(peerMap, worst) ->
+        atomically $ sendToPeer peerMap PeerChoke worst
+    
