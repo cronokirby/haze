@@ -23,10 +23,12 @@ import           Relude
 import           Control.Concurrent.Async       ( Async
                                                 , async
                                                 )
-import           Control.Concurrent.STM.TBQueue ( TBQueue
-                                                , newTBQueueIO
-                                                , readTBQueue
-                                                , writeTBQueue
+-- TQueue is unbounded, which isn't ideal, but in practice
+-- logging gets overwhelmed and deadlocks the whole program otherwise
+import           Control.Concurrent.STM.TQueue ( TQueue
+                                                , newTQueueIO
+                                                , readTQueue
+                                                , writeTQueue
                                                 )
 import           Control.Exception.Safe         ( MonadThrow
                                                 , MonadCatch
@@ -76,7 +78,7 @@ a .= b = (a, show b)
 
 -- | The information a logger needs
 data LoggerInfo = LoggerInfo
-    { loggerIEvents :: !(TBQueue Event)
+    { loggerIEvents :: !(TQueue Event)
     -- | The seperation text between events
     , loggerISep :: !Text
     -- | Whether or not to log the time
@@ -96,7 +98,7 @@ newtype LoggerM a = LoggerM (ReaderT LoggerInfo IO a)
 loggerLoop :: LoggerM ()
 loggerLoop = (`finally` cleanup) . forever $ do
     info  <- ask
-    event <- atomically $ readTBQueue (loggerIEvents info)
+    event <- atomically $ readTQueue (loggerIEvents info)
     liftIO $ TIO.hPutStr (loggerIHandle info) (makeLog info event)
   where
     cleanup :: LoggerM ()
@@ -117,15 +119,13 @@ data LoggerConfig = LoggerConfig
     { loggerSep :: !Text -- | The seperation between elements
     -- | Whether or not to log the time
     , loggerTime :: !Bool
-    -- | The size of the event buffer to keep
-    , loggerBufSize :: !Int
     -- | The file to log to potentially
     , loggerFile :: !(Maybe (Path Abs File))
     }
 
 -- | A default value for the logger configuration
 defaultLoggerConfig :: LoggerConfig
-defaultLoggerConfig = LoggerConfig ", " True 4096 Nothing
+defaultLoggerConfig = LoggerConfig ", " True Nothing
 
 {- | Start a logger with a given config
 
@@ -133,7 +133,7 @@ This will launch the logger in a thread that will die if the surrounding one doe
 -}
 startLogger :: LoggerConfig -> IO (Async (), LoggerHandle)
 startLogger LoggerConfig {..} = do
-    q <- newTBQueueIO (fromIntegral loggerBufSize)
+    q <- newTQueueIO
     let fp = Path.toFilePath <$> loggerFile
     handle <- maybe (return IO.stdout) (`IO.openFile` IO.WriteMode) fp
     let info           = LoggerInfo q loggerSep loggerTime handle
@@ -143,7 +143,7 @@ startLogger LoggerConfig {..} = do
 
 
 -- | A handle allowing us to send messages to a logger
-newtype LoggerHandle = LoggerHandle (TBQueue Event)
+newtype LoggerHandle = LoggerHandle (TQueue Event)
 
 class HasLogger m where
     getLogger :: m LoggerHandle
@@ -154,4 +154,4 @@ log i pairs = do
     time <- liftIO getCurrentTime
     let event = Event i time pairs
     (LoggerHandle q) <- getLogger
-    atomically $ writeTBQueue q event
+    atomically $ writeTQueue q event
