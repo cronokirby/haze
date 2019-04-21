@@ -380,13 +380,9 @@ writePiecesM = do
     -- Since we never save a piece twice, this should stay >= 0
     updateLeft saved t@TrackStatus {..} =
         t { trackLeft = trackLeft - fromIntegral saved }
-    logNewPieces pieceSet
-        | Set.null pieceSet = logPieceWriter
-            Debug
-            ["msg" .= ("checked, but no new pieces" :: String)]
-        | otherwise = logPieceWriter Info ["new-pieces" .= pieceSet]
-
-
+    logNewPieces pieceSet = unless (Set.null pieceSet) $
+        logPieceWriter Info ["new-pieces" .= pieceSet]
+        
 pieceWriterLoop :: PieceWriterM ()
 pieceWriterLoop = forever $ do
     msg <- recvToWriter

@@ -376,7 +376,6 @@ sendMessage msg = do
     let bytes = encodeMessage pieceCount msg
     incrementTrackUp (BS.length bytes)
     liftIO $ sendAll socket bytes
-    logPeer Noisy ["sent" .= PrettyMessage msg]
 
 -- | Send a message to the writer
 sendToWriter :: PeerToWriter -> PeerM ()
@@ -448,11 +447,6 @@ adjustRequested = do
                 return nextPiece
             else return Nothing
     whenJust maybePiece downloadMore
-    logInterest
-  where
-    logInterest = do
-        PeerFriendship {..} <- asks (handleFriendship . peerHandle) >>= readTVarIO
-        logPeer Noisy ["am-interested" .= peerAmInterested]
 
 {- | Clear our requested blocks entirely.
 
@@ -488,12 +482,6 @@ downloadMore piece = do
         writeTVar peerBlockQueue new
         return (filter (not . (`Set.member` current) . blockIndex) blockSet)
     forM_ added (sendMessage . Request)
-    logQueue
-  where
-    logQueue = do
-        PeerInfo {..} <- ask
-        blockQueue <- readTVarIO peerBlockQueue
-        logPeer Noisy ["queued" .= blockQueue]
 
 
 -- | Add a piece locally, and increment it's global count.
@@ -560,7 +548,6 @@ reactToMessage msg = always *> case msg of
     always = do
         keepAlive <- asks peerKeepAlive
         atomically $ writeTVar keepAlive True
-        logPeer Noisy ["received" .= PrettyMessage msg]
 
 -- | React to messages sent by the writer
 reactToWriter :: WriterToPeer -> PeerM ()
