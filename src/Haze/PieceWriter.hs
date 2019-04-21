@@ -320,18 +320,25 @@ data PieceWriterInfo = PieceWriterInfo
 
 We need the peer information, as well as the necessary information
 to construct the plans for saving pieces.
+
+This will ensure that the root directory exists,
+by creating it if necessary.
 -}
 makePieceWriterInfo
-    :: PeerInfo
+    :: MonadIO m => PeerInfo
     -> LoggerHandle
     -> FileInfo
     -> SHAPieces
     -> AbsDir
-    -> PieceWriterInfo
-makePieceWriterInfo pieceInfo pieceLogger fileInfo shaPieces root =
+    -> m PieceWriterInfo
+makePieceWriterInfo pieceInfo pieceLogger fileInfo shaPieces root = do
     let pieceMapping   = makeMapping fileInfo shaPieces root
         pieceStructure = makeFileStructure pieceMapping
-    in  PieceWriterInfo { .. }
+    -- make sure the directory we're saving to exists
+    case fileInfo of
+        SingleFile _ -> return ()
+        MultiFile relRoot _ -> Path.ensureDir (root </> relRoot)
+    return PieceWriterInfo { .. }
 
 -- | A context with access to what a piece writer process needs
 newtype PieceWriterM a = PieceWriterM (ReaderT PieceWriterInfo IO a)

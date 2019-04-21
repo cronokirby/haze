@@ -138,7 +138,7 @@ startAll = sequence
         sha      <- asks (metaPieces . clientMeta)
         root     <- asks clientRoot
         logH     <- asks clientLogger
-        let pwInfo = makePieceWriterInfo peerInfo logH fileInfo sha root
+        pwInfo   <- makePieceWriterInfo peerInfo logH fileInfo sha root
         asyncio $ runPieceWriterM pieceWriterLoop pwInfo
     startSelector :: ClientM (Async ())
     startSelector = do
