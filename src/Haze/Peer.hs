@@ -618,7 +618,7 @@ checkKeepAliveLoop = forever $ do
 This is needed to maintain a connection with the peer.
 -}
 sendKeepAliveLoop :: PeerM ()
-sendKeepAliveLoop = do
+sendKeepAliveLoop = forever $ do
     liftIO . threadDelay $ 60 * 1_000_000
     sendMessage KeepAlive
 
