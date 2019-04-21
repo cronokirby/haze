@@ -540,10 +540,12 @@ reactToMessage msg = doLog *> case msg of
         let amChoking = askFriendship peerAmChoking
         unlessM amChoking (sendToWriter (PieceRequest me info))
     RecvBlock index bytes -> do
-        requested <- asks peerRequested >>= readTVarIO
+        PeerInfo{..} <- ask
+        requested <- readTVarIO peerRequested
         let piece = blockPiece index
         when (Just piece == requested) $ do
             writeBlockM index bytes
+            atomically $ modifyTVar' peerBlockQueue (Set.delete index)
             sendToWriter PieceBufferWritten
             downloadMore piece
     Cancel (BlockInfo index _) -> do
