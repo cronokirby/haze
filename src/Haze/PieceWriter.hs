@@ -87,6 +87,27 @@ import           Haze.Tracker                   ( FileInfo(..)
 type AbsFile = Path Abs File
 type AbsDir = Path Abs Dir
 
+-- | Write bytes to an absolute path
+writeAbsFile :: MonadIO m => AbsFile -> ByteString -> m ()
+writeAbsFile path = writeFileBS (Path.fromAbsFile path)
+
+-- | Utility function for `withFile` but with an absolute path
+withAbsFile :: MonadIO m => AbsFile -> IOMode -> (Handle -> IO a) -> m a
+withAbsFile path mode action =
+    liftIO $ withFile (Path.fromAbsFile path) mode action
+
+-- | Append all paths in a file to a handle
+appendAll :: [AbsFile] -> Handle -> IO ()
+appendAll paths = forM_ paths . appendH
+  where
+    moveBytes h = LBS.hGetContents >=> LBS.hPut h
+    appendH h path = withAbsFile path ReadMode (moveBytes h)
+
+-- | Remove all files in a list
+removeAll :: MonadIO m => [AbsFile] -> m ()
+removeAll paths = forM_ paths Path.removeFile
+
+
 makePiecePath :: AbsDir -> Int -> AbsFile
 makePiecePath theRoot piece =
     let pieceName = "piece-" ++ show piece ++ ".bin"
@@ -144,53 +165,6 @@ makeFileStructure (PieceMapping m) =
                 = (l, f)
         in  SplitPieces (map getSplit plenty)
 
-
-
-{- | Write a list of complete indices and pieces to a file.
-
-This function takes information about the pieces, telling
-it how they're arranged into files, as well as the size of each normal piece.
-The function takes an absolute directory to serve as the root for all files.
--}
-writePieces :: MonadIO m => FileStructure -> [(Int, ByteString)] -> m ()
-writePieces (FileStructure splitPieces deps) pieces = do
-    forM_ pieces $ \(piece, bytes) -> case splitPieces ! piece of
-        NormalPiece filePath -> writeFileBS (Path.fromAbsFile filePath) bytes
-        SplitPieces splits ->
-            let go (bs, action) (size, file) =
-                        let (start, end) = BS.splitAt size bs
-                        in  (end, action *> writeAbsFile file start)
-            in  snd $ foldl' go (bytes, pure ()) splits
-    forM_ deps (uncurry appendWhenAllExist)
-  where
-    -- This will also remove the appended files
-    appendWhenAllExist :: MonadIO m => AbsFile -> [AbsFile] -> m ()
-    appendWhenAllExist filePath paths = do
-        allPieces <- allM Path.doesFileExist paths
-        when allPieces $ do
-            withAbsFile filePath AppendMode (appendAll paths)
-            removeAll paths
-
-
--- | Write bytes to an absolute path
-writeAbsFile :: MonadIO m => AbsFile -> ByteString -> m ()
-writeAbsFile path = writeFileBS (Path.fromAbsFile path)
-
--- | Utility function for `withFile` but with an absolute path
-withAbsFile :: MonadIO m => AbsFile -> IOMode -> (Handle -> IO a) -> m a
-withAbsFile path mode action =
-    liftIO $ withFile (Path.fromAbsFile path) mode action
-
--- | Append all paths in a file to a handle
-appendAll :: [AbsFile] -> Handle -> IO ()
-appendAll paths = forM_ paths . appendH
-  where
-    moveBytes h = LBS.hGetContents >=> LBS.hPut h
-    appendH h path = withAbsFile path ReadMode (moveBytes h)
-
--- | Remove all files in a list
-removeAll :: MonadIO m => [AbsFile] -> m ()
-removeAll paths = forM_ paths Path.removeFile
 
 {- | PieceMapping allows us to determine where to find a piece on disk.
 
@@ -283,25 +257,6 @@ fillLocation root piece embeds =
         CompleteLocation (makeStartPiece file)
 
 
--- | using a pieceMapping, get the nth piece from disk
-getPiece :: MonadIO m => PieceMapping -> Int -> m ByteString
-getPiece (PieceMapping mappings) piece =
-    let mapping = mappings ! piece in foldMapA getLocation mapping
-  where
-    getLocation :: MonadIO m => PieceLocation -> m ByteString
-    getLocation (PieceLocation embedded (CompleteLocation cl)) = do
-        isComplete <- Path.doesFileExist cl
-        if isComplete then readComplete cl else readEmbedded embedded
-    readComplete :: MonadIO m => AbsFile -> m ByteString
-    readComplete = readFileBS . Path.fromAbsFile
-    readEmbedded :: MonadIO m => EmbeddedLocation -> m ByteString
-    readEmbedded (EmbeddedLocation file offset amount) =
-        withAbsFile file ReadMode $ \h -> do
-            hSeek h AbsoluteSeek (fromIntegral offset)
-            BS.hGet h amount
-
-
-
 {- | Represents the data a piece writer needs
 
 A piece writer needs to have information about how
@@ -325,7 +280,8 @@ This will ensure that the root directory exists,
 by creating it if necessary.
 -}
 makePieceWriterInfo
-    :: MonadIO m => PeerInfo
+    :: MonadIO m
+    => PeerInfo
     -> LoggerHandle
     -> FileInfo
     -> SHAPieces
@@ -336,7 +292,7 @@ makePieceWriterInfo pieceInfo pieceLogger fileInfo shaPieces root = do
         pieceStructure = makeFileStructure pieceMapping
     -- make sure the directory we're saving to exists
     case fileInfo of
-        SingleFile _ -> Path.ensureDir root
+        SingleFile _        -> Path.ensureDir root
         MultiFile relRoot _ -> Path.ensureDir (root </> relRoot)
     return PieceWriterInfo { .. }
 
@@ -362,12 +318,58 @@ logPieceWriter :: Importance -> [(Text, Text)] -> PieceWriterM ()
 logPieceWriter i pairs = log i ("source" .= ("piece-writer" :: String) : pairs)
 
 
+-- | Fetch the nth piece from disk
+getPiece :: Int -> PieceWriterM ByteString
+getPiece piece = do
+    (PieceMapping mappings) <- asks pieceMapping
+    let mapping = mappings ! piece
+    foldMapA getLocation mapping
+  where
+    getLocation :: MonadIO m => PieceLocation -> m ByteString
+    getLocation (PieceLocation embedded (CompleteLocation cl)) = do
+        isComplete <- Path.doesFileExist cl
+        if isComplete then readComplete cl else readEmbedded embedded
+    readComplete :: MonadIO m => AbsFile -> m ByteString
+    readComplete = readFileBS . Path.fromAbsFile
+    readEmbedded :: MonadIO m => EmbeddedLocation -> m ByteString
+    readEmbedded (EmbeddedLocation file offset amount) =
+        withAbsFile file ReadMode $ \h -> do
+            hSeek h AbsoluteSeek (fromIntegral offset)
+            BS.hGet h amount
+
+
+{- | Write a list of complete indices and pieces to a file.
+
+This function takes information about the pieces, telling
+it how they're arranged into files, as well as the size of each normal piece.
+The function takes an absolute directory to serve as the root for all files.
+-}
+writePieces :: [(Int, ByteString)] -> PieceWriterM ()
+writePieces pieces = do
+    (FileStructure splitPieces deps) <- asks pieceStructure
+    forM_ pieces $ \(piece, bytes) -> case splitPieces ! piece of
+        NormalPiece filePath -> writeFileBS (Path.fromAbsFile filePath) bytes
+        SplitPieces splits ->
+            let go (bs, action) (size, file) =
+                        let (start, end) = BS.splitAt size bs
+                        in  (end, action *> writeAbsFile file start)
+            in  snd $ foldl' go (bytes, pure ()) splits
+    forM_ deps (uncurry appendWhenAllExist)
+  where
+    -- This will also remove the appended files
+    appendWhenAllExist :: MonadIO m => AbsFile -> [AbsFile] -> m ()
+    appendWhenAllExist filePath paths = do
+        allPieces <- allM Path.doesFileExist paths
+        when allPieces $ do
+            withAbsFile filePath AppendMode (appendAll paths)
+            removeAll paths
+
+
 -- | Lookup and write the pieces in a pieceBuff
 writePiecesM :: PieceWriterM ()
 writePiecesM = do
     pieces <- saveCompletePiecesM
-    info   <- asks pieceStructure
-    writePieces info pieces
+    writePieces pieces
     let pieceSet = Set.fromList $ map fst pieces
     logNewPieces pieceSet
     forM_ pieceSet $ sendWriterToAll . PieceAcquired
@@ -380,9 +382,9 @@ writePiecesM = do
     -- Since we never save a piece twice, this should stay >= 0
     updateLeft saved t@TrackStatus {..} =
         t { trackLeft = trackLeft - fromIntegral saved }
-    logNewPieces pieceSet = unless (Set.null pieceSet) $
-        logPieceWriter Info ["new-pieces" .= pieceSet]
-        
+    logNewPieces pieceSet = unless (Set.null pieceSet)
+        $ logPieceWriter Info ["new-pieces" .= pieceSet]
+
 pieceWriterLoop :: PieceWriterM ()
 pieceWriterLoop = forever $ do
     msg <- recvToWriter
@@ -390,7 +392,6 @@ pieceWriterLoop = forever $ do
         PieceBufferWritten     -> writePiecesM
         PieceRequest peer info -> do
             let (BlockInfo index@(BlockIndex piece offset) size) = info
-            mapping   <- asks pieceMapping
-            pieceData <- getPiece mapping piece
+            pieceData <- getPiece piece
             let block = BS.take size $ BS.drop offset pieceData
             sendWriterToPeer (PieceFulfilled index block) peer
