@@ -13,6 +13,7 @@ module Haze.Tracker
     , MD5Sum(..)
     , SHA1(..)
     , SHAPieces(..)
+    , pieceHashesCorrectly
     , FileInfo(..)
     , FileItem(..)
     , totalFileLength
@@ -131,6 +132,10 @@ newtype MD5Sum = MD5Sum ByteString deriving (Show)
 -- | Represents a 20 byte SHA1 hash
 newtype SHA1 = SHA1 { getSHA1 :: ByteString } deriving (Eq, Show)
 
+-- | Construct a new SHA1 hash from the data
+makeSHA1 :: ByteString -> SHA1
+makeSHA1 = SHA1 . SHA1.hash
+
 {- | Represents the concatenation of multiple SHA pieces.
 
 The integer represents the length of each piece, and the bytestring
@@ -140,6 +145,14 @@ data SHAPieces = SHAPieces Int64 ByteString deriving (Eq)
 
 instance Show SHAPieces where
     show (SHAPieces i _) = "SHAPieces " ++ Relude.show i ++ " (..bytes)"
+
+-- | Check whether or not a given piece hashes to the right value
+pieceHashesCorrectly :: SHAPieces -> Int -> ByteString -> Bool
+pieceHashesCorrectly (SHAPieces _ hashes) piece pieceBytes =
+    let (SHA1 pieceHash) = makeSHA1 pieceBytes
+        slottedHash = BS.take 20 $ BS.drop (20 * piece) hashes
+    in pieceHash == slottedHash
+
 
 {- | Represents the information in the `info` of a metainfo file
 
@@ -222,7 +235,7 @@ decodeMeta = Decoder doDecode
     doDecode (BMap mp) = do
         info <- HM.lookup "info" mp
         (metaPieces, metaPrivate, metaFile) <- getInfo info
-        let metaInfoHash = SHA1 $ SHA1.hash (encode encodeBen info)
+        let metaInfoHash = makeSHA1 (encode encodeBen info)
         announceURL <- withKey "announce" mp tryText
         let metaAnnounce     = trackerFromURL announceURL
         let metaAnnounceList = getAnnounces "announce-list" mp

@@ -38,7 +38,9 @@ import qualified Data.ByteString               as BS
 -- We import lazy bytestring for implementing efficient file ops
 import qualified Data.ByteString.Lazy          as LBS
 import qualified Data.HashSet                  as HS
-import           Data.List                      ( nub )
+import           Data.List                      ( partition
+                                                , nub
+                                                )
 import           Data.Maybe                     ( fromJust )
 import qualified Data.Set                      as Set
 import           Path                           ( Path
@@ -80,6 +82,7 @@ import           Haze.Tracker                   ( FileInfo(..)
                                                 , FileItem(..)
                                                 , SHAPieces(..)
                                                 , TrackStatus(..)
+                                                , pieceHashesCorrectly
                                                 , totalFileLength
                                                 )
 
@@ -272,6 +275,8 @@ data PieceWriterInfo = PieceWriterInfo
     , pieceInfo :: !PeerInfo
     -- The set of all files dependencies we've written
     , pieceWritten :: !(IORef (HS.HashSet AbsFile))
+    -- | The information about the piece hashes
+    , pieceHashes :: !SHAPieces
     }
 
 {- | Construct the information a piece writer needs.
@@ -290,8 +295,8 @@ makePieceWriterInfo
     -> SHAPieces
     -> AbsDir
     -> m PieceWriterInfo
-makePieceWriterInfo pieceInfo pieceLogger fileInfo shaPieces root = do
-    let pieceMapping   = makeMapping fileInfo shaPieces root
+makePieceWriterInfo pieceInfo pieceLogger fileInfo pieceHashes root = do
+    let pieceMapping   = makeMapping fileInfo pieceHashes root
         pieceStructure = makeFileStructure pieceMapping
     pieceWritten <- newIORef HS.empty
     -- make sure the directory we're saving to exists
@@ -371,8 +376,8 @@ writePieces pieces = do
     -- This will also remove the appended files
     appendWhenAllExist :: AbsFile -> [AbsFile] -> PieceWriterM ()
     appendWhenAllExist filePath paths = do
-        PieceWriterInfo {..}  <- ask
-        written <- readIORef pieceWritten
+        PieceWriterInfo {..} <- ask
+        written              <- readIORef pieceWritten
         let allDepsExist = all (`HS.member` written) paths
             amWritten    = HS.member filePath written
         when (not amWritten && allDepsExist) $ do
@@ -384,22 +389,27 @@ writePieces pieces = do
 -- | Lookup and write the pieces in a pieceBuff
 writePiecesM :: PieceWriterM ()
 writePiecesM = do
-    pieces <- saveCompletePiecesM
-    writePieces pieces
-    let pieceSet = Set.fromList $ map fst pieces
-    logNewPieces pieceSet
-    forM_ pieceSet $ sendWriterToAll . PieceAcquired
+    shaPieces <- asks pieceHashes
+    pieces    <- saveCompletePiecesM
+    let hasGoodHash             = uncurry (pieceHashesCorrectly shaPieces)
+        (goodPieces, badPieces) = partition hasGoodHash pieces
+    let pieceSet = Set.fromList $ map fst goodPieces
+    logNewPieces goodPieces badPieces
+    forM_ pieceSet (sendWriterToAll . PieceAcquired)
     ourPieces <- asks (infoOurPieces . pieceInfo)
     atomically $ modifyTVar' ourPieces (Set.union pieceSet)
-    let savedCount = sum $ map (BS.length . snd) pieces
+    writePieces goodPieces
+    let savedCount = sum $ map (BS.length . snd) goodPieces
     status <- infoStatus <$> getPeerInfo
     atomically $ modifyTVar' status (updateLeft savedCount)
   where
     -- Since we never save a piece twice, this should stay >= 0
     updateLeft saved t@TrackStatus {..} =
         t { trackLeft = trackLeft - fromIntegral saved }
-    logNewPieces pieceSet = unless (Set.null pieceSet)
-        $ logPieceWriter Info ["new-pieces" .= pieceSet]
+    logNewPieces []         []        = return ()
+    logNewPieces goodPieces badPieces = logPieceWriter
+        Info
+        ["good-pieces" .= goodPieces, "bad-pieces" .= badPieces]
 
 pieceWriterLoop :: PieceWriterM ()
 pieceWriterLoop = forever $ do
