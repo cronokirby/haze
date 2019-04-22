@@ -42,12 +42,14 @@ data StatusInfo = StatusInfo
     , statusDLRate :: !Double
     -- | The rate at which we're uploading in bytes per second
     , statusULRate :: !Double
+    -- | The completion rate of the torrent
+    , statusCompletion :: !Double
     -- | The number of peers we're connected to
     , statusPeerCount :: !Int
     }
 
 initialStatusInfo :: MetaInfo -> StatusInfo
-initialStatusInfo meta = StatusInfo 0 0 (totalFileSize meta) 0.0 0.0 0
+initialStatusInfo meta = StatusInfo 0 0 (totalFileSize meta) 0.0 0.0 0.0 0
 
 
 -- | Print the information in a status info to the console
@@ -58,11 +60,13 @@ printStatusInfo StatusInfo {..} = liftIO $ do
     let uploaded = printf "%.2f MB" (makeMB statusUploaded) :: String
     printf "%-24s %.2f MB/s\n\n" uploaded (statusULRate / 1_000_000)
     putStrLn "Downloaded:"
-    let dl = makeMB statusDownloaded
-        total = makeMB statusToDownload
+    let dl         = makeMB statusDownloaded
+        total      = makeMB statusToDownload
         downloaded = printf "%.2f / %.2f MB" dl total :: String
-    printf "%-24s %.2f MB/s\n" downloaded (statusDLRate / 1_000_000)
-    liftIO $ ANSI.cursorUp 7
+    printf "%-24s %.2f MB/s\n\n" downloaded (statusDLRate / 1_000_000)
+    let bar = replicate (floor (27 * statusCompletion)) '='
+    printf "%3.f%% [%-27s]\n" (100 * statusCompletion) bar
+    liftIO $ ANSI.cursorUp 9
   where
     makeMB :: Integral a => a -> Double
     makeMB a = fromIntegral a / 1_000_000
@@ -99,12 +103,15 @@ updateStatus :: PrinterM ()
 updateStatus = do
     PrinterInfo {..} <- ask
     let PeerInfo {..} = peerInfo
-    (StatusInfo upld dld statusToDownload _ _ _) <- readIORef printerStatus
+    (StatusInfo upld dld statusToDownload _ _ _ _) <- readIORef printerStatus
     trackStatus <- readTVarIO infoStatus
     let statusUploaded   = trackUp trackStatus
         statusDownloaded = trackDown trackStatus
         statusDLRate     = makeRate (statusDownloaded - dld)
         statusULRate     = makeRate (statusUploaded - upld)
+        left             = trackLeft trackStatus
+        percentLeft      = fromIntegral left / fromIntegral statusToDownload
+        statusCompletion = 1.0 - percentLeft
     statusPeerCount <- HM.size <$> readTVarIO infoMap
     writeIORef printerStatus StatusInfo { .. }
   where
