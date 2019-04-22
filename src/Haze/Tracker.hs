@@ -17,6 +17,7 @@ module Haze.Tracker
     , FileItem(..)
     , totalFileLength
     , MetaInfo(..)
+    , totalFileSize
     , squashedTrackers
     , decodeMeta
     , metaFromBytes

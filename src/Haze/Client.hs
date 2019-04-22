@@ -52,6 +52,10 @@ import           Haze.PieceWriter               ( makePieceWriterInfo
                                                 , runPieceWriterM
                                                 , pieceWriterLoop
                                                 )
+import           Haze.Printer                   ( makePrinterInfo
+                                                , runPrinterM
+                                                , printerLoop
+                                                )
 import           Haze.Selector                  ( makeSelectorInfo
                                                 , runSelectorM
                                                 , selectorLoop
@@ -75,7 +79,8 @@ data ClientInfo = ClientInfo
     }
 
 -- | Make client information given a torrent file
-makeClientInfo :: MonadIO m => MetaInfo -> FilePath -> LoggerHandle -> m ClientInfo
+makeClientInfo
+    :: MonadIO m => MetaInfo -> FilePath -> LoggerHandle -> m ClientInfo
 makeClientInfo clientMeta dir clientLogger = do
     clientPeerInfo <- makeEmptyPeerInfo clientMeta
     let clientRoot = fromJust (Path.parseAbsDir dir)
@@ -100,6 +105,7 @@ launchClient file dir = do
             putStrLn "Failed to decode file:"
             putTextLn err
         Right meta -> do
+            putStrLn ("Downloading " ++ file ++ " ...\n")
             thisDir <- Path.getCurrentDir
             let logFile = thisDir </> fromJust (Path.parseRelFile "haze.log")
                 loggerConfig =
@@ -119,7 +125,7 @@ startClient = do
 -- | Start all the sub components
 startAll :: ClientM [Async ()]
 startAll = sequence
-    [startAnnouncer, startPieceWriter, startSelector, startGateway]
+    [startAnnouncer, startPieceWriter, startSelector, startGateway, startPrinter]
   where
     asyncio = liftIO . async
     startAnnouncer :: ClientM (Async ())
@@ -154,3 +160,9 @@ startAll = sequence
         logger    <- asks clientLogger
         gateInfo  <- makeGatewayInfo peerInfo announces meta logger
         asyncio $ runGatewayM gatewayLoop gateInfo
+    startPrinter :: ClientM (Async ())
+    startPrinter = do
+        peerInfo <- asks clientPeerInfo
+        meta     <- asks clientMeta
+        info     <- makePrinterInfo meta peerInfo
+        asyncio $ runPrinterM printerLoop info

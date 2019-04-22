@@ -58,8 +58,6 @@ import           Haze.Tracker                   ( MetaInfo
                                                 )
 
 
-
-
 {- | Holds information on our relationship with a peer
 
 This needs to be exposed in order to make decisions on which peers

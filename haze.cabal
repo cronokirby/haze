@@ -33,6 +33,7 @@ library
                        Haze.PeerInfo
                        Haze.PieceBuffer
                        Haze.PieceWriter
+                       Haze.Printer
                        Haze.Selector
                        Haze.Tracker
                        Control.Logger
@@ -40,6 +41,7 @@ library
                        Data.TieredList
   ghc-options:         -Wall
   build-depends:       base-noprelude       >= 4.12 && < 5
+                     , ansi-terminal        >= 0.8  && < 0.9
                      , attoparsec           >= 0.13 && < 0.14
                      , array                >= 0.5  && < 0.6
                      , async                >= 2.2  && < 2.3
