@@ -21,6 +21,8 @@ cabal.config
 cabal.project.local
 .ghc.environment.*
 .HTF/
+# profile viz
+haze.svg
 # Stack
 .stack-work/
 
