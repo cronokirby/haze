@@ -37,6 +37,7 @@ import           Data.Array                     ( Array
 import qualified Data.ByteString               as BS
 -- We import lazy bytestring for implementing efficient file ops
 import qualified Data.ByteString.Lazy          as LBS
+import qualified Data.HashSet                  as HS
 import           Data.List                      ( nub )
 import           Data.Maybe                     ( fromJust )
 import qualified Data.Set                      as Set
@@ -269,6 +270,8 @@ data PieceWriterInfo = PieceWriterInfo
     , pieceMapping :: !PieceMapping
     , pieceLogger :: !LoggerHandle
     , pieceInfo :: !PeerInfo
+    -- The set of all files dependencies we've written
+    , pieceWritten :: !(IORef (HS.HashSet AbsFile))
     }
 
 {- | Construct the information a piece writer needs.
@@ -290,6 +293,7 @@ makePieceWriterInfo
 makePieceWriterInfo pieceInfo pieceLogger fileInfo shaPieces root = do
     let pieceMapping   = makeMapping fileInfo shaPieces root
         pieceStructure = makeFileStructure pieceMapping
+    pieceWritten <- newIORef HS.empty
     -- make sure the directory we're saving to exists
     case fileInfo of
         SingleFile _        -> Path.ensureDir root
@@ -348,19 +352,31 @@ writePieces :: [(Int, ByteString)] -> PieceWriterM ()
 writePieces pieces = do
     (FileStructure splitPieces deps) <- asks pieceStructure
     forM_ pieces $ \(piece, bytes) -> case splitPieces ! piece of
-        NormalPiece filePath -> writeFileBS (Path.fromAbsFile filePath) bytes
+        NormalPiece filePath -> writePieceFile filePath bytes
         SplitPieces splits ->
             let go (bs, action) (size, file) =
                         let (start, end) = BS.splitAt size bs
-                        in  (end, action *> writeAbsFile file start)
+                        in  (end, action *> writePieceFile file start)
             in  snd $ foldl' go (bytes, pure ()) splits
     forM_ deps (uncurry appendWhenAllExist)
   where
+    -- write a file and cache the fact that it has been written
+    -- once we write a piece, it will always be there until it's
+    -- dependent has also been written
+    writePieceFile :: AbsFile -> ByteString -> PieceWriterM ()
+    writePieceFile file bs = do
+        PieceWriterInfo {..} <- ask
+        writeAbsFile file bs
+        modifyIORef' pieceWritten (HS.insert file)
     -- This will also remove the appended files
-    appendWhenAllExist :: MonadIO m => AbsFile -> [AbsFile] -> m ()
+    appendWhenAllExist :: AbsFile -> [AbsFile] -> PieceWriterM ()
     appendWhenAllExist filePath paths = do
-        allPieces <- allM Path.doesFileExist paths
-        when allPieces $ do
+        PieceWriterInfo {..}  <- ask
+        written <- readIORef pieceWritten
+        let allDepsExist = all (`HS.member` written) paths
+            amWritten    = HS.member filePath written
+        when (not amWritten && allDepsExist) $ do
+            writeIORef pieceWritten (HS.insert filePath written)
             withAbsFile filePath AppendMode (appendAll paths)
             removeAll paths
 
