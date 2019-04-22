@@ -34,6 +34,8 @@ data WriterToPeer
     = PieceFulfilled !BlockIndex !ByteString
     -- | A new piece has just been saved
     | PieceAcquired !Int
+    -- | A bad piece arrived, and we should redownload it
+    | PieceHadBadHash !Int
 
 -- | Messages sent from the selector to a peer
 data SelectorToPeer

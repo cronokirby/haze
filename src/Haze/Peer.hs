@@ -557,8 +557,14 @@ reactToWriter msg = case msg of
         unless (Set.member index shouldCancel)
             $ sendMessage (RecvBlock index bytes)
     PieceAcquired piece -> do
-        PeerInfo {..} <- ask
         sendMessage (Have piece)
+        adjustPiece piece
+        requested <- asks peerRequested >>= readTVarIO
+        logPeer Noisy ["piece-acquired" .= piece, "piece-requested" .= requested]
+    PieceHadBadHash piece -> adjustPiece piece
+  where
+    adjustPiece piece = do
+        PeerInfo {..} <- ask
         adjustInterest
         atomically $ do
             requested <- readTVar peerRequested
@@ -566,8 +572,6 @@ reactToWriter msg = case msg of
                 writeTVar peerRequested Nothing
                 writeTVar peerBlockQueue Set.empty
         adjustRequested
-        requested <- readTVarIO peerRequested
-        logPeer Noisy ["piece-acquired" .= piece, "piece-requested" .= requested]
 
 -- | Loop and react to messages sent by the writer
 writerLoop :: PeerM ()

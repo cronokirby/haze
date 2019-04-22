@@ -77,6 +77,7 @@ import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , BlockInfo(..)
                                                 , HasPieceBuffer(..)
                                                 , saveCompletePiecesM
+                                                , resetPieceM
                                                 )
 import           Haze.Tracker                   ( FileInfo(..)
                                                 , FileItem(..)
@@ -393,6 +394,9 @@ writePiecesM = do
     pieces    <- saveCompletePiecesM
     let hasGoodHash             = uncurry (pieceHashesCorrectly shaPieces)
         (goodPieces, badPieces) = partition hasGoodHash pieces
+    forM_ badPieces $ \(piece, _) -> do
+        resetPieceM piece
+        sendWriterToAll (PieceHadBadHash piece)
     let pieceSet = Set.fromList $ map fst goodPieces
     logNewPieces goodPieces badPieces
     forM_ pieceSet (sendWriterToAll . PieceAcquired)
