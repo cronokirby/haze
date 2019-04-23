@@ -29,7 +29,7 @@ Available options:
 
 After launching **haze** with a torrent, it will show a progress display with
 ongoing information on the status of the torrent. Once the torrent has finished downloading,
-**haze** will continue to seed it until the program is exited.
+**haze** will continue to seed it until the program is cancelled (using CTRL-C is fine).
 
 By default, **haze** will output the torrent files to the current directory, although
 if a torrent has multiple files, it will usually define a relative root, and files will
