@@ -25,7 +25,7 @@ import           Control.Concurrent.Async       ( Async
                                                 )
 -- TQueue is unbounded, which isn't ideal, but in practice
 -- logging gets overwhelmed and deadlocks the whole program otherwise
-import           Control.Concurrent.STM.TQueue ( TQueue
+import           Control.Concurrent.STM.TQueue  ( TQueue
                                                 , newTQueueIO
                                                 , readTQueue
                                                 , writeTQueue
@@ -119,7 +119,10 @@ data LoggerConfig = LoggerConfig
     { loggerSep :: !Text -- | The seperation between elements
     -- | Whether or not to log the time
     , loggerTime :: !Bool
-    -- | The file to log to potentially
+    {- | The file to log to potentially
+
+    No file indicates that no logging should be done
+    -}
     , loggerFile :: !(Maybe (Path Abs File))
     }
 
@@ -132,18 +135,23 @@ defaultLoggerConfig = LoggerConfig ", " True Nothing
 This will launch the logger in a thread that will die if the surrounding one does.
 -}
 startLogger :: LoggerConfig -> IO (Async (), LoggerHandle)
-startLogger LoggerConfig {..} = do
-    q <- newTQueueIO
-    let fp = Path.toFilePath <$> loggerFile
-    handle <- maybe (return IO.stdout) (`IO.openFile` IO.WriteMode) fp
-    let info           = LoggerInfo q loggerSep loggerTime handle
-        (LoggerM loop) = loggerLoop
-    pid <- async $ runReaderT loop info
-    return (pid, LoggerHandle q)
+startLogger LoggerConfig {..} = case loggerFile of
+    Nothing -> do
+        pid <- async $ return ()
+        return (pid, FakeHandle)
+    Just file -> do
+        q      <- newTQueueIO
+        handle <- IO.openFile (Path.toFilePath file) IO.WriteMode
+        let info           = LoggerInfo q loggerSep loggerTime handle
+            (LoggerM loop) = loggerLoop
+        pid <- async $ runReaderT loop info
+        return (pid, RealHandle q)
 
 
 -- | A handle allowing us to send messages to a logger
-newtype LoggerHandle = LoggerHandle (TQueue Event)
+data LoggerHandle
+    = RealHandle !(TQueue Event)
+    | FakeHandle
 
 class HasLogger m where
     getLogger :: m LoggerHandle
@@ -151,7 +159,12 @@ class HasLogger m where
 -- | Log an event to the logger
 log :: (MonadIO m, HasLogger m) => Importance -> [(Text, Text)] -> m ()
 log i pairs = do
-    time <- liftIO getCurrentTime
-    let event = Event i time pairs
-    (LoggerHandle q) <- getLogger
-    atomically $ writeTQueue q event
+    handle <- getLogger
+    case handle of
+        RealHandle q -> doLog q
+        FakeHandle   -> return ()
+  where
+    doLog q = do
+        time <- liftIO getCurrentTime
+        let event = Event i time pairs
+        atomically $ writeTQueue q event

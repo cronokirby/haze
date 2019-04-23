@@ -22,14 +22,11 @@ import           Control.Concurrent.STM.TBQueue ( TBQueue
                                                 , newTBQueueIO
                                                 )
 import           Control.Exception.Safe         ( finally )
-import           Data.Maybe                     ( fromJust )
 import           Path                           ( Path
                                                 , Abs
                                                 , Dir
-                                                , (</>)
                                                 )
 import qualified Path
-import qualified Path.IO                       as Path
 
 import           Control.Logger                 ( LoggerHandle
                                                 , LoggerConfig(..)
@@ -41,6 +38,7 @@ import           Haze.Announcer                 ( makeAnnouncerInfo
                                                 , launchAnnouncer
                                                 )
 import           Haze.Bencoding                 ( DecodeError(..) )
+import           Haze.Config                    ( Config(..) )
 import           Haze.Gateway                   ( makeGatewayInfo
                                                 , runGatewayM
                                                 , gatewayLoop
@@ -80,10 +78,9 @@ data ClientInfo = ClientInfo
 
 -- | Make client information given a torrent file
 makeClientInfo
-    :: MonadIO m => MetaInfo -> FilePath -> LoggerHandle -> m ClientInfo
-makeClientInfo clientMeta dir clientLogger = do
-    clientPeerInfo <- makeEmptyPeerInfo clientMeta
-    let clientRoot = fromJust (Path.parseAbsDir dir)
+    :: MonadIO m => MetaInfo -> Path Abs Dir -> LoggerHandle -> m ClientInfo
+makeClientInfo clientMeta clientRoot clientLogger = do
+    clientPeerInfo         <- makeEmptyPeerInfo clientMeta
     clientAnnouncerResults <- liftIO $ newTBQueueIO 16
     return ClientInfo { .. }
 
@@ -97,21 +94,20 @@ runClientM :: ClientM a -> ClientInfo -> IO a
 runClientM (ClientM m) = runReaderT m
 
 -- | Launch a client given a file path from which to start
-launchClient :: FilePath -> FilePath -> IO ()
-launchClient file dir = do
-    bytes <- readFileBS file
+launchClient :: Config -> IO ()
+launchClient Config {..} = do
+    bytes <- readFileBS (Path.fromAbsFile configTorrentFile)
     case metaFromBytes bytes of
         Left (DecodeError err) -> do
             putStrLn "Failed to decode file:"
             putTextLn err
         Right meta -> do
-            putStrLn ("Downloading " ++ file ++ " ...\n")
-            thisDir <- Path.getCurrentDir
-            let logFile = thisDir </> fromJust (Path.parseRelFile "haze.log")
-                loggerConfig =
-                    defaultLoggerConfig { loggerFile = Just logFile }
+            let filename = Path.fromRelFile $ Path.filename configTorrentFile
+            putStrLn ("Downloading " ++ filename ++ "\n")
+            let loggerConfig =
+                    defaultLoggerConfig { loggerFile = configLogFile }
             (pid, logger) <- startLogger loggerConfig
-            clientInfo    <- makeClientInfo meta dir logger
+            clientInfo    <- makeClientInfo meta configDownloadDir logger
             runClientM startClient clientInfo `finally` cancel pid
 
 startClient :: ClientM ()
@@ -125,7 +121,12 @@ startClient = do
 -- | Start all the sub components
 startAll :: ClientM [Async ()]
 startAll = sequence
-    [startAnnouncer, startPieceWriter, startSelector, startGateway, startPrinter]
+    [ startAnnouncer
+    , startPieceWriter
+    , startSelector
+    , startGateway
+    , startPrinter
+    ]
   where
     asyncio = liftIO . async
     startAnnouncer :: ClientM (Async ())
