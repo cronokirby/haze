@@ -143,7 +143,9 @@ selectPeers :: SelectorM ()
 selectPeers = do
     peerMap   <- asks (infoMap . selectorPeerInfo) >>= readTVarIO
     peerRates <- forM (HM.toList peerMap) $ \(peer, spec) -> do
-        rate <- atomically $ extractRate (peerDLRate spec)
+        seeding <- asks (infoSeeding . selectorPeerInfo) >>= readTVarIO
+        let rateF = if seeding then peerULRate else peerDLRate
+        rate <- atomically $ extractRate (rateF spec)
         return (peer, rate)
     let sortedPeers = sortBy (flip compare `on` snd) peerRates
         isInterested peer = do
@@ -221,8 +223,10 @@ newDownloader peer = do
                 return Nothing
             else do
                 rates <- forM (HS.toList downloaders) $ \pr -> do
-                    let spec = fromJust $ HM.lookup peer peerMap
-                    rate <- extractRate (peerDLRate spec)
+                    seeding <- readTVar infoSeeding
+                    let spec  = fromJust $ HM.lookup peer peerMap
+                        rateF = if seeding then peerULRate else peerDLRate
+                    rate <- extractRate (rateF spec)
                     return (pr, rate)
                 let worst =
                         fst . fromJust . viaNonEmpty head $ sortOn snd rates
@@ -234,4 +238,4 @@ newDownloader peer = do
                 return (Just (peerMap, worst))
     whenJust res $ \(peerMap, worst) ->
         atomically $ sendToPeer peerMap PeerChoke worst
-    
+

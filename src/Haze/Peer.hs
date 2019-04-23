@@ -329,7 +329,11 @@ runPeerM (PeerM rdr) = runReaderT rdr
 incrementTrackUp :: Integral a => a -> PeerM ()
 incrementTrackUp n = do
     status <- asksHandle handleStatus
-    atomically $ modifyTVar' status increment
+    ulRate <- asksHandle handleULRate
+    let shiftRates = addDownload (fromIntegral n)
+    atomically $ do
+        modifyTVar' ulRate shiftRates
+        modifyTVar' status increment
   where
     increment t@TrackStatus {..} = t { trackUp = trackUp + fromIntegral n }
 
@@ -337,7 +341,11 @@ incrementTrackUp n = do
 incrementTrackDown :: Integral a => a -> PeerM ()
 incrementTrackDown n = do
     status <- asksHandle handleStatus
-    atomically $ modifyTVar' status increment
+    dlRate <- asksHandle handleDLRate
+    let shiftRates = addDownload (fromIntegral n)
+    atomically $ do
+        modifyTVar' dlRate shiftRates
+        modifyTVar' status increment
   where
     increment t@TrackStatus {..} = t { trackDown = trackDown + fromIntegral n }
 
@@ -353,7 +361,7 @@ askFriendship f = f <$> (asksHandle handleFriendship >>= readTVarIO)
 
 
 -- | Represents the different types of exceptions with a peer
-data PeerException
+newtype PeerException
     -- | The peer committed a fatal mistake in communication
     = PeerMistakeException Text
     deriving (Show)
@@ -633,11 +641,7 @@ recvLoop :: ParseCallBack -> PeerM ()
 recvLoop cb = do
     socket <- asks peerSocket
     bytes  <- liftIO $ recv socket 1024
-    dlRate <- asksHandle handleDLRate
-    let byteCount  = BS.length bytes
-        shiftRates = addDownload byteCount
-    atomically $ modifyTVar' dlRate shiftRates
-    incrementTrackDown byteCount
+    incrementTrackDown (BS.length bytes)
     case parseMessages cb bytes of
         Nothing          -> recvLoop firstParseCallBack
         Just (msgs, cb') -> do

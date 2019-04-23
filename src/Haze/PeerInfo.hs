@@ -106,6 +106,8 @@ data PeerHandle = PeerHandle
     , handleFriendship :: !(TVar PeerFriendship)
     -- | The rate window for downloading
     , handleDLRate :: !(TVar RateWindow)
+    -- | The rate window for uploading
+    , handleULRate :: !(TVar RateWindow)
     -- | The status of the download rates
     , handleStatus :: !(TVar TrackStatus)
     -- | The peer associated with this handle
@@ -126,6 +128,8 @@ data PeerSpecific = PeerSpecific
     , peerFriendship :: !(TVar PeerFriendship)
     -- | The download rate window for this peer
     , peerDLRate :: !(TVar RateWindow)
+    -- | The upload rate window for this peer
+    , peerULRate :: !(TVar RateWindow)
     }
 
 -- | Create a new empty struct of PeerSpecific Data
@@ -135,6 +139,7 @@ makePeerSpecific =
         <$> mkQueue
         <*> mkQueue
         <*> newTVarIO emptyFriendship
+        <*> newTVarIO emptyRateWindow
         <*> newTVarIO emptyRateWindow
     where mkQueue = liftIO (newTBQueueIO 256)
 
@@ -155,6 +160,8 @@ data PeerInfo = PeerInfo
     , infoToSelector :: !(TBQueue PeerToSelector)
     -- | The information about our upload and download status
     , infoStatus :: !(TVar TrackStatus)
+    -- | Whether or not we have all the data, and are now seeding
+    , infoSeeding :: !(TVar Bool)
     -- | The shared peer ID we're using
     , infoPeerID :: !PeerID
     -- | A map from a Peer to specific Peer data
@@ -172,6 +179,7 @@ makeEmptyPeerInfo meta = do
     infoToSelector <- liftIO $ newTBQueueIO 1024
     infoPeerID     <- generatePeerID
     infoStatus     <- newTVarIO (firstTrackStatus meta)
+    infoSeeding    <- newTVarIO False
     infoMap        <- newTVarIO HM.empty
     return PeerInfo { .. }
 
@@ -190,6 +198,7 @@ makeHandle PeerSpecific {..} PeerInfo {..} = PeerHandle infoPieces
                                                         infoToSelector
                                                         peerFriendship
                                                         peerDLRate
+                                                        peerULRate
                                                         infoStatus
 
 -- | Add a new peer to the information we have

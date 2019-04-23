@@ -31,6 +31,7 @@ import           Relude
 
 import           Data.Array                     ( Array
                                                 , (!)
+                                                , bounds
                                                 , elems
                                                 , listArray
                                                 )
@@ -390,9 +391,10 @@ writePieces pieces = do
 -- | Lookup and write the pieces in a pieceBuff
 writePiecesM :: PieceWriterM ()
 writePiecesM = do
-    shaPieces <- asks pieceHashes
-    pieces    <- saveCompletePiecesM
-    let hasGoodHash             = uncurry (pieceHashesCorrectly shaPieces)
+    PieceWriterInfo {..} <- ask
+    let PeerInfo {..} = pieceInfo
+    pieces <- saveCompletePiecesM
+    let hasGoodHash             = uncurry (pieceHashesCorrectly pieceHashes)
         (goodPieces, badPieces) = partition hasGoodHash pieces
     forM_ badPieces $ \(piece, _) -> do
         resetPieceM piece
@@ -400,12 +402,14 @@ writePiecesM = do
     let pieceSet = Set.fromList $ map fst goodPieces
     logNewPieces goodPieces badPieces
     forM_ pieceSet (sendWriterToAll . PieceAcquired)
-    ourPieces <- asks (infoOurPieces . pieceInfo)
-    atomically $ modifyTVar' ourPieces (Set.union pieceSet)
+    atomically $ modifyTVar' infoOurPieces (Set.union pieceSet)
     writePieces goodPieces
     let savedCount = sum $ map (BS.length . snd) goodPieces
-    status <- infoStatus <$> getPeerInfo
-    atomically $ modifyTVar' status (updateLeft savedCount)
+    atomically $ modifyTVar' infoStatus (updateLeft savedCount)
+    havePieceCount <- Set.size <$> readTVarIO infoOurPieces
+    let pieceCount = snd (bounds infoPieces) + 1
+        setSeeding = atomically $ writeTVar infoSeeding True
+    when (havePieceCount == pieceCount) setSeeding
   where
     -- Since we never save a piece twice, this should stay >= 0
     updateLeft saved t@TrackStatus {..} =
