@@ -19,12 +19,10 @@ module Haze.PieceBuffer
     , blockInfoMatches
     , PieceBuffer
     , makePieceBuffer
-    , sizedPieceBuffer
     , bufferArr
     , takeBlocks
     , writeBlock
     , saveCompletePieces
-    , bufferBytes
     , HasPieceBuffer(..)
     , takeBlocksM
     , writeBlockM
@@ -36,17 +34,16 @@ where
 import           Relude
 
 import           Data.Array                     ( Array
-                                                , (!)
-                                                , (//)
                                                 , assocs
                                                 , bounds
                                                 , elems
                                                 , listArray
                                                 )
-import qualified Data.ByteString.Char8         as BS
-import           Data.Ix                        ( Ix
-                                                , inRange
+import           Data.Array.Base                ( unsafeAt
+                                                , unsafeArray
+                                                , unsafeReplace
                                                 )
+import qualified Data.ByteString.Char8         as BS
 
 import           Haze.Tracker                   ( SHAPieces(..)
                                                 , MetaInfo(..)
@@ -54,12 +51,8 @@ import           Haze.Tracker                   ( SHAPieces(..)
                                                 )
 
 
-safeGet :: Ix i => Array i a -> i -> Maybe a
-safeGet arr i | inRange (bounds arr) i = Just (arr ! i)
-              | otherwise              = Nothing
-
-putArr :: Ix i => i -> a -> Array i a -> Array i a
-putArr ix val arr = arr // [(ix, val)]
+unsafePutArr :: Int -> a -> Array Int a -> Array Int a
+unsafePutArr ix val arr = unsafeReplace arr [(ix, val)]
 
 
 -- | The size of a piece composing the torrent
@@ -78,8 +71,13 @@ type BlockSize = Int
 We keep track of the normal and last piece size in order to easily
 reset a piece in case of a bad hash
 -}
-data PieceBuffer = PieceBuffer !PieceSize !PieceSize !BlockSize !(Array Int Piece)
-    deriving (Eq, Show)
+data PieceBuffer = PieceBuffer
+    { pbNormalSize :: !PieceSize
+    , pbLastSize :: !PieceSize
+    , pbBlockSize :: !BlockSize
+    , pbPieces :: !(Array Int (TVar Piece))
+    }
+    deriving (Eq)
 
 -- | Represents one of the pieces composing 
 data Piece
@@ -142,16 +140,16 @@ getFullBlock = getFullBytes . getSizedBlock
 
 {- | Fill a size block, truncating the ByteString if necessary
 
-Returns 'Nothing' if the block was already full.
+This acts as a no-op if the blocks if already full.
 -}
-fillTruncated :: ByteString -> BlockSize -> SizedBlock -> Maybe SizedBlock
+fillTruncated :: ByteString -> BlockSize -> SizedBlock -> SizedBlock
 fillTruncated bytes blockSize sized = case sized of
-    NormalSized b       -> NormalSized <$> write blockSize b
-    SpecialSized size b -> SpecialSized size <$> write size b
+    NormalSized b       -> NormalSized (write blockSize b)
+    SpecialSized size b -> SpecialSized size (write size b)
   where
     write size b = case b of
-        FullBlock _ -> Nothing
-        _           -> Just (FullBlock (BS.take size bytes))
+        f@(FullBlock _) -> f
+        _               -> FullBlock (BS.take size bytes)
 
 
 {- | Construct a piece buffer from total size, piece size, and block size
@@ -160,12 +158,17 @@ This exists mainly as a tool for testing the implementation of piece buffers.
 usually you want to make a piece buffer corresponding to the configuration
 of an actual torrent file, in which case 'makePieceBuffer' should be used
 -}
-sizedPieceBuffer :: Int64 -> SHAPieces -> BlockSize -> PieceBuffer
-sizedPieceBuffer totalSize (SHAPieces pieceSize _) blockSize =
-    let chunks   = chunkSizes totalSize pieceSize
-        pieces   = makePiece blockSize <$> chunks
-        pieceArr = listArray (0, length chunks - 1) pieces
-    in  PieceBuffer pieceSize (totalSize `mod` pieceSize) blockSize pieceArr
+sizedPieceBuffer
+    :: MonadIO m => Int64 -> SHAPieces -> BlockSize -> m PieceBuffer
+sizedPieceBuffer totalSize (SHAPieces pbNormalSize _) pbBlockSize = do
+    let pbLastSize = case totalSize `mod` pbNormalSize of
+            0 -> pbNormalSize
+            x -> x
+        chunks = chunkSizes totalSize pbNormalSize
+        pieces = makePiece pbBlockSize <$> chunks
+    pieceVars <- mapM newTVarIO pieces
+    let pbPieces = unsafeArray (0, length chunks - 1) (zip [0 ..] pieceVars)
+    return PieceBuffer { .. }
   where
     chunkSizes :: Integral a => a -> a -> [a]
     chunkSizes total size =
@@ -185,9 +188,9 @@ bufferArr (PieceBuffer _ _ _ arr) = arr $> ()
 
 The block size controls the size of each downloadable chunk inside
 of an individual piece composing the data to download. Usually
-the default in this module should use.
+the default in this module should be used.
 -}
-makePieceBuffer :: BlockSize -> MetaInfo -> PieceBuffer
+makePieceBuffer :: MonadIO m => BlockSize -> MetaInfo -> m PieceBuffer
 makePieceBuffer blockSize MetaInfo {..} =
     let totalLength = totalFileLength metaFile
     in  sizedPieceBuffer totalLength metaPieces blockSize
@@ -243,26 +246,28 @@ blockInfoMatches BlockInfo {..} index bytes =
 
 Returns Nothing if that piece is completed.
 Note that a completed piece might not have been saved yet.
+
+The piece must have been verified to be in the right bounds before
+calling this function.
 -}
-takeBlocks :: Int -> Int -> PieceBuffer -> (Maybe [BlockInfo], PieceBuffer)
-takeBlocks amount piece buf@(PieceBuffer n l blockSize pieces) =
-    case getIncompletePiece pieces piece of
-        Nothing -> (Nothing, buf)
-        Just blocks ->
+takeBlocks :: Int -> Int -> PieceBuffer -> STM (Maybe [BlockInfo])
+takeBlocks amount pieceIdx PieceBuffer {..} = do
+    let var = unsafeAt pbPieces pieceIdx
+    piece <- readTVar var
+    case piece of
+        Saved             -> return Nothing
+        Complete   _      -> return Nothing
+        Incomplete blocks -> do
             let nextBlocks = findNextBlocks blocks
-                blocks'    = blocks // nextBlocks
-                pieces'    = putArr piece (Incomplete blocks') pieces
                 blockInfos = map makeBlock nextBlocks
-            in  (Just blockInfos, PieceBuffer n l blockSize pieces')
+                blocks'    = unsafeReplace blocks nextBlocks
+            blocks' `seq` writeTVar var (Incomplete blocks')
+            return (Just blockInfos)
   where
-    getIncompletePiece :: Array Int Piece -> Int -> Maybe (Array Int SizedBlock)
-    getIncompletePiece arr ix = case safeGet arr ix of
-        Just (Incomplete blocks) -> Just blocks
-        _                        -> Nothing
     makeBlock :: (Int, SizedBlock) -> BlockInfo
     makeBlock (blockIdx, block) =
-        let thisSize = getSize blockSize block
-        in  makeBlockInfo piece (blockIdx * blockSize) thisSize
+        let thisSize = getSize pbBlockSize block
+        in  makeBlockInfo pieceIdx (blockIdx * pbBlockSize) thisSize
     getTag :: SizedBlock -> Maybe Int
     getTag sb =
         let block = getSizedBlock sb
@@ -293,21 +298,20 @@ In theory, no one should write to the same block twice anyways,
 if 'nextBlock' is used correctly, since each block will be tagged,
 so multiple processes won't jump on the same block.
 -}
-writeBlock :: BlockIndex -> ByteString -> PieceBuffer -> PieceBuffer
-writeBlock BlockIndex {..} bytes buf@(PieceBuffer n l blockSize pieces) =
-    fromMaybe buf $ do
-        blocks <- incompleteBlocks
-        let blockIdx = blockOffset `div` blockSize
-        block  <- safeGet blocks blockIdx
-        filled <- fillTruncated bytes blockSize block
-        let blocks' = putArr blockIdx filled blocks
-            pieces' = putArr blockPiece (completePiece blocks') pieces
-        return (PieceBuffer n l blockSize pieces')
+writeBlock :: BlockIndex -> ByteString -> PieceBuffer -> STM ()
+writeBlock BlockIndex {..} bytes PieceBuffer {..} = do
+    let var = unsafeAt pbPieces blockPiece
+    piece <- readTVar var
+    case piece of
+        Saved             -> return ()
+        Complete   _      -> return ()
+        Incomplete blocks -> do
+            let blockIdx = blockOffset `div` pbBlockSize
+                block    = unsafeAt blocks blockIdx
+                filled   = fillTruncated bytes pbBlockSize block
+                blocks'  = unsafePutArr blockIdx filled blocks
+            blocks' `seq` writeTVar var (completePiece blocks')
   where
-    incompleteBlocks :: Maybe (Array Int SizedBlock)
-    incompleteBlocks = case safeGet pieces blockPiece of
-        Just (Incomplete blocks) -> Just blocks
-        _                        -> Nothing
     completePiece :: Array Int SizedBlock -> Piece
     completePiece blocks =
         let allBytes = traverse getFullBlock (elems blocks)
@@ -315,21 +319,18 @@ writeBlock BlockIndex {..} bytes buf@(PieceBuffer n l blockSize pieces) =
 
 {- | Reset a piece back to its initial state.
 
-This should be used in case a piece hases to wrong
+This should be used in case a piece hashes to wrong
 thing, for whatever reason. In that case, we want
 to redownload the piece entirely, and thus, get
 rid of the data currently in the buffer.
 -}
-resetPiece :: Int -> PieceBuffer -> PieceBuffer
-resetPiece piece (PieceBuffer normal bookEnd blockSize pieces) =
-    let lastPiece = snd (bounds pieces)
-        pieceSize = if piece /= lastPiece || bookEnd == 0 
-            then normal
-            else bookEnd
-        newPiece = makePiece blockSize pieceSize
-        pieces' = putArr piece newPiece pieces
-    in PieceBuffer normal bookEnd blockSize pieces'
-
+resetPiece :: Int -> PieceBuffer -> STM ()
+resetPiece pieceIdx PieceBuffer {..} = do
+    let lastPiece = snd (bounds pbPieces)
+        pieceSize = if pieceIdx /= lastPiece then pbNormalSize else pbLastSize
+        newPiece  = makePiece pbBlockSize pieceSize
+        pieceVar  = unsafeAt pbPieces pieceIdx
+    newPiece `seq` writeTVar pieceVar newPiece
 
 {- | Take out all complete pieces from the buffer.
 
@@ -337,73 +338,37 @@ The main utility in this function is in saving the piece buffer to disk.
 This function returns a list of (pieceIndex, bytes) ready to save,
 and removes these pieces from the buffer itself.
 -}
-saveCompletePieces :: PieceBuffer -> ([(Int, ByteString)], PieceBuffer)
-saveCompletePieces (PieceBuffer n l size pieces) =
-    let extractPiece (i, p) = (,) i <$> getComplete p
-        complete = catMaybes $ extractPiece <$> assocs pieces
-        pieces'  = pieces // map (\(i, _) -> (i, Saved)) complete
-        buffer'  = PieceBuffer n l size pieces'
-    in  (complete, buffer')
-  where
-    getComplete :: Piece -> Maybe ByteString
-    getComplete (Complete bytes) = Just bytes
-    getComplete _                = Nothing
-
-
-{- | Represent the piece buffer as a full bytestring.
-
-This could be very large! This is useful mainly for testing and
-debugging. This function also ignores file boundaries.
-
-This only displays complete pieces, and not the blocks inside of them.
-
-Since this is used for debugging, empty portions are represented as
-"_", and saved portions as "s".
--}
-bufferBytes :: PieceBuffer -> ByteString
-bufferBytes (PieceBuffer pieceSize _ _ pieces) = foldMap
-    pieceBytes
-    (elems pieces)
-  where
-    size = fromIntegral pieceSize
-    pieceBytes :: Piece -> ByteString
-    pieceBytes Saved           = BS.replicate size 's'
-    pieceBytes (Complete   bs) = bs
-    pieceBytes (Incomplete _ ) = BS.replicate size '_'
-
-
-
--- Utility function to apply a stateful function to a TVar
-stateTVar :: MonadIO m => (s -> (a, s)) -> TVar s -> m a
-stateTVar f var = atomically $ do
-    s <- readTVar var
-    let (a, s') = f s
-    writeTVar var $! s'
-    return a
+saveCompletePieces :: PieceBuffer -> STM [(Int, ByteString)]
+saveCompletePieces PieceBuffer {..} = do
+    pairs <- forM (assocs pbPieces) $ \(i, var) -> do
+        piece <- readTVar var
+        case piece of
+            Complete bytes -> do
+                writeTVar var Saved
+                return (Just (i, bytes))
+            _ -> return Nothing
+    return (catMaybes pairs)
 
 
 -- | Represents a class of contexts in which we have access to a piecebuffer
 class HasPieceBuffer m where
-    getPieceBuffer :: m (TVar PieceBuffer)
+    getPieceBuffer :: m PieceBuffer
 
 -- | Get and tag a certain number of blocks from the buffer
 takeBlocksM
     :: (MonadIO m, HasPieceBuffer m) => Int -> Int -> m (Maybe [BlockInfo])
 takeBlocksM amount piece =
-    getPieceBuffer >>= stateTVar (takeBlocks amount piece)
+    getPieceBuffer >>= atomically . takeBlocks amount piece
 
 -- | Commit a block to a shared buffer
 writeBlockM :: (MonadIO m, HasPieceBuffer m) => BlockIndex -> ByteString -> m ()
-writeBlockM index bytes = do
-    var <- getPieceBuffer
-    atomically $ modifyTVar' var (writeBlock index bytes)
+writeBlockM index bytes =
+    getPieceBuffer >>= atomically . writeBlock index bytes
 
 -- | Reset a specific piece to its initial state
 resetPieceM :: (MonadIO m, HasPieceBuffer m) => Int -> m ()
-resetPieceM piece = do
-    var <- getPieceBuffer
-    atomically $ modifyTVar' var (resetPiece piece)
+resetPieceM piece = getPieceBuffer >>= atomically . resetPiece piece
 
 -- | Save the completed pieces to the shared buffer
 saveCompletePiecesM :: (MonadIO m, HasPieceBuffer m) => m [(Int, ByteString)]
-saveCompletePiecesM = getPieceBuffer >>= stateTVar saveCompletePieces
+saveCompletePiecesM = getPieceBuffer >>= atomically . saveCompletePieces

@@ -2,7 +2,6 @@ import           Relude
 
 import           Data.Array                     ( listArray )
 import           Data.Attoparsec.ByteString     ( parseOnly )
-import qualified Data.ByteString               as BS
 import qualified Data.HashMap.Strict           as HM
 import           Data.Maybe                     ( fromJust )
 import qualified Data.Set                      as Set
@@ -22,12 +21,6 @@ import           Haze.Peer                      ( Message(..)
 import           Haze.PieceBuffer               ( BlockIndex(..)
                                                 , BlockInfo
                                                 , makeBlockInfo
-                                                , blockInfoMatches
-                                                , sizedPieceBuffer
-                                                , takeBlocks
-                                                , writeBlock
-                                                , saveCompletePieces
-                                                , bufferBytes
                                                 )
 import           Haze.PieceWriter               ( FileStructure(..)
                                                 , SplitPiece(..)
@@ -48,7 +41,6 @@ main :: IO ()
 main = do
     hspec bencodingSpec
     hspec messageSpec
-    hspec pieceBufferSpec
     hspec pieceWriterSpec
     propertyTests
 
@@ -111,75 +103,6 @@ messageSpec =
             $ RecvBlock (BlockIndex 9 9) "A"
     where shouldParse bs res = parseOnly parseMessage bs `shouldBe` Right res
 
-
-pieceBufferSpec :: SpecWith ()
-pieceBufferSpec = do
-    describe "PieceBuffer.blockInfoMatches" $ do
-        let info = makeBlockInfo 0 0 4
-            shouldMatch x bs = blockInfoMatches info x bs `shouldBe` True
-            shouldNotMatch x bs = blockInfoMatches info x bs `shouldBe` False
-        it "returns True when everything matches" $ do
-            shouldMatch (BlockIndex 0 0) "1234"
-            shouldMatch (BlockIndex 0 0) "____"
-        it "returns False when the index doesn't match" $ do
-            shouldNotMatch (BlockIndex 1 0) "1234"
-            shouldNotMatch (BlockIndex 9 0) "____"
-        it "returns False when the offset doesn't match" $ do
-            shouldNotMatch (BlockIndex 0 1) "____"
-            shouldNotMatch (BlockIndex 0 9) "1234"
-        it "returns False when the byte length doesn't match" $ do
-            shouldNotMatch (BlockIndex 0 0) ""
-            shouldNotMatch (BlockIndex 0 0) "TOO LONG"
-    describe "PieceBuffer.takeBlocks" $ do
-        it "fetches the first available block"
-            $ takeBlocksShouldBe 1 0 (Just [(makeBlockInfo 0 0 1)])
-        it "returns Nothing for invalid indices" $ do
-            takeBlocksShouldBe 1 100  Nothing
-            takeBlocksShouldBe 1 (-1) Nothing
-            takeBlocksShouldBe 1 2     Nothing
-    describe "PieceBuffer.bufferBytes" $ do
-        it "returns a bytestring with the same length as the buffer" $ do
-            BS.length (bufferBytes oneBuffer) `shouldBe` 1
-            BS.length (bufferBytes awkwardBuffer) `shouldBe` 3
-            BS.length (bufferBytes bigBuffer) `shouldBe` 4
-        it "returns just underscores for an empty buffer" $ do
-            oneBuffer `bytesShouldBe` "_"
-            bigBuffer `bytesShouldBe` "____"
-    describe "PieceBuffer.writeBlock" $ do
-        it "lets up fill up a piece" $ do
-            bigBuffer1 `bytesShouldBe` "____"
-            bigBuffer2 `bytesShouldBe` "12__"
-        it "does nothing if the piece is already written" $ do
-            writeBlock (BlockIndex 0 0) "X" bigBuffer2 `bytesShouldBe` "12__"
-            writeBlock (BlockIndex 0 1) "X" bigBuffer2 `bytesShouldBe` "12__"
-        it "does not change the length of a piece" $ do
-            let awkward1 = writeBlock (BlockIndex 0 0) "12" awkwardBuffer
-                awkward2 = writeBlock (BlockIndex 0 2) "34" awkward1
-            awkward2 `bytesShouldBe` "123"
-        it "can handle the final piece of a buffer" $ do
-            let buffer  = sizedPieceBuffer 3 (SHAPieces 2 "") 2
-                written = writeBlock (BlockIndex 1 0) "12" buffer
-            written `bytesShouldBe` "__1"
-    describe "PieceBuffer.saveCompletePieces" $ do
-        let (pieces1, buf1) = saveCompletePieces bigBuffer2
-            (pieces2, buf2) = saveCompletePieces bigBuffer1
-        it "will replace the pieces by saved bytes" $ do
-            buf1 `bytesShouldBe` "ss__"
-            buf2 `bytesShouldBe` "____"
-        it "will return just the pieces that are complete" $ do
-            pieces1 `shouldBe` [(0, "12")]
-            pieces2 `shouldBe` []
-  where
-    takeBlocksShouldBe amount piece target =
-        fst (takeBlocks amount piece oneBuffer) `shouldBe` target
-    bytesShouldBe buf target = bufferBytes buf `shouldBe` target
-    oneBuffer     = sizedPieceBuffer 1 (SHAPieces 1 "") 1
-    awkwardBuffer = sizedPieceBuffer 3 (SHAPieces 3 "") 2
-    bigBuffer     = sizedPieceBuffer 4 (SHAPieces 2 "") 1
-    bigBuffer1    = writeBlock (BlockIndex 0 0) "1" bigBuffer
-    bigBuffer2    = writeBlock (BlockIndex 0 1) "2" bigBuffer1
-
-
 pieceWriterSpec :: SpecWith ()
 pieceWriterSpec = do
     makeMappingSpec
@@ -239,9 +162,9 @@ makeMappingSpec = describe "PieceWriter.makeMapping" $ do
     smallPieces = SHAPieces 2 ""
     mappingShouldBe info locations =
         let makeLoc (efs, o, i, cfs) =
-                let complete = CompleteLocation (makeAbsFile cfs)
-                    embedded = EmbeddedLocation (makeAbsFile efs) o i
-                in  PieceLocation embedded complete
+                    let complete = CompleteLocation (makeAbsFile cfs)
+                        embedded = EmbeddedLocation (makeAbsFile efs) o i
+                    in  PieceLocation embedded complete
             locs        = map makeLoc <$> locations
             mapping     = listArray (0, length locs - 1) locs
             madeMapping = makeMapping info smallPieces root
@@ -282,11 +205,10 @@ makeFileStructureSpec = describe "PieceWriter.makeFileStructure" $ do
     it "works for small files" $ do
         let fs = [("foo.txt", 3), ("bar.txt", 1), ("baz.txt", 2)]
             splits =
-                    [ makeNormal "/rel/piece-0.bin"
-                    , makeSplits
-                        [(1, "rel/foo.txt.end"), (1, "/rel/bar.txt.start")]
-                    , makeNormal "/rel/piece-2.bin"
-                    ]
+                [ makeNormal "/rel/piece-0.bin"
+                , makeSplits [(1, "rel/foo.txt.end"), (1, "/rel/bar.txt.start")]
+                , makeNormal "/rel/piece-2.bin"
+                ]
             deps =
                 [ ("/rel/foo.txt", ["/rel/piece-0.bin", "/rel/foo.txt.end"])
                 , ("/rel/bar.txt", ["/rel/bar.txt.start"])
@@ -307,7 +229,7 @@ makeFileStructureSpec = describe "PieceWriter.makeFileStructure" $ do
     makeStructure splits deps =
         let splitArr = listArray (0, length splits - 1) splits
             absDeps =
-                map (\(f, fs) -> (makeAbsFile f, map makeAbsFile fs)) deps
+                    map (\(f, fs) -> (makeAbsFile f, map makeAbsFile fs)) deps
         in  FileStructure splitArr absDeps
     fsShouldBe info res =
         let mapping = makeMapping info smallPieces root

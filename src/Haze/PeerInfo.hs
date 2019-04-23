@@ -93,7 +93,7 @@ data PeerHandle = PeerHandle
     -- | The pieces we currently have
     , handleOurPieces :: !(TVar (Set Int))
     -- | The piece buffer we share with everyone
-    , handleBuffer :: !(TVar PieceBuffer)
+    , handleBuffer :: !PieceBuffer
     -- | The out bound message queue to the writer
     , handleToWriter :: !(TBQueue PeerToWriter)
     -- | The specific channel from the writer
@@ -148,7 +148,7 @@ data PeerInfo = PeerInfo
     -- | The pieces we currently have
     , infoOurPieces :: !(TVar (Set Int))
     -- | The shared piece buffer
-    , infoBuffer :: !(TVar PieceBuffer)
+    , infoBuffer :: !PieceBuffer
     -- | The shared message queue to the writer
     , infoToWriter :: !(TBQueue PeerToWriter)
     -- | The shared message queue to the selector
@@ -164,11 +164,10 @@ data PeerInfo = PeerInfo
 -- | This creates the initial Peer information
 makeEmptyPeerInfo :: MonadIO m => MetaInfo -> m PeerInfo
 makeEmptyPeerInfo meta = do
-    let buffer = makePieceBuffer 0x4000 meta
-        makeCountVar _ = newTVarIO (0 :: Int)
-    infoPieces     <- traverse makeCountVar $ bufferArr buffer
+    let makeCountVar _ = newTVarIO (0 :: Int)
+    infoBuffer     <- makePieceBuffer 0x4000 meta
+    infoPieces     <- traverse makeCountVar $ bufferArr infoBuffer
     infoOurPieces  <- newTVarIO Set.empty
-    infoBuffer     <- newTVarIO buffer
     infoToWriter   <- liftIO $ newTBQueueIO 1024
     infoToSelector <- liftIO $ newTBQueueIO 1024
     infoPeerID     <- generatePeerID
@@ -205,7 +204,7 @@ addPeer newPeer = do
 -- | Remove a peer from the map
 removePeer :: (MonadIO m, HasPeerInfo m) => Peer -> m ()
 removePeer peer = do
-    PeerInfo{..} <- getPeerInfo
+    PeerInfo {..} <- getPeerInfo
     atomically $ modifyTVar' infoMap (HM.delete peer)
 
 

@@ -425,7 +425,7 @@ adjustRequested :: PeerM ()
 adjustRequested = do
     PeerInfo {..} <- ask
     let PeerHandle {..} = peerHandle
-        amount = 10
+        amount          = 10
     -- We choose which of the N rarest in advance
     -- We have to do this in case we end up choosing a piece
     slot       <- liftIO $ randomRIO (0, amount)
@@ -437,12 +437,14 @@ adjustRequested = do
             then do
                 theirPieces <- readTVar peerPieces
                 ourPieces   <- readTVar handleOurPieces
-                let newPieces = Set.difference theirPieces ourPieces
+                let newPieces     = Set.difference theirPieces ourPieces
                     newPieceCount = Set.size newPieces
                     getCount p = (,) p <$> readTVar (handlePieces ! p)
                 rankedPieces <- traverse getCount (Set.toList newPieces)
-                let sortedPieces = map fst $ sortBy (compare `on` snd) rankedPieces
-                    nextPiece    = Just (sortedPieces !! (slot `mod` newPieceCount))
+                let sortedPieces =
+                        map fst $ sortBy (compare `on` snd) rankedPieces
+                    nextPiece =
+                        Just (sortedPieces !! (slot `mod` newPieceCount))
                 writeTVar peerRequested nextPiece
                 return nextPiece
             else return Nothing
@@ -457,7 +459,7 @@ clearRequested :: PeerM ()
 clearRequested = do
     PeerInfo {..} <- ask
     atomically $ do
-        writeTVar peerRequested Nothing
+        writeTVar peerRequested  Nothing
         writeTVar peerBlockQueue Set.empty
 
 {- | Continue downloading blocks in a piece.
@@ -469,11 +471,9 @@ downloadMore piece = do
     PeerInfo {..} <- ask
     let PeerHandle {..} = peerHandle
     added <- atomically $ do
-        buf     <- readTVar handleBuffer
         current <- readTVar peerBlockQueue
-        let toTake         = 10 - Set.size current -- shouldn't be negative
-            (blocks, buf') = takeBlocks toTake piece buf
-        buf' `seq` writeTVar handleBuffer buf'
+        let toTake = 10 - Set.size current -- shouldn't be negative
+        blocks <- takeBlocks toTake piece handleBuffer
         -- We don't react specifically to nothing,
         -- since we handle that when reacting to the pieceWriter
         let blockSet = fromMaybe [] blocks
@@ -503,7 +503,7 @@ addPiece piece = do
 reactToMessage :: Message -> PeerM ()
 reactToMessage msg = always *> case msg of
     KeepAlive -> return ()
-    Choke   -> do
+    Choke     -> do
         modifyFriendship (\f -> f { peerIsChoking = True })
         clearRequested
     UnChoke -> do
@@ -532,8 +532,8 @@ reactToMessage msg = always *> case msg of
         let amChoking = askFriendship peerAmChoking
         unlessM amChoking (sendToWriter (PieceRequest me info))
     RecvBlock index bytes -> do
-        PeerInfo{..} <- ask
-        requested <- readTVarIO peerRequested
+        PeerInfo {..} <- ask
+        requested     <- readTVarIO peerRequested
         let piece = blockPiece index
         when (Just piece == requested) $ do
             writeBlockM index bytes
@@ -560,7 +560,8 @@ reactToWriter msg = case msg of
         sendMessage (Have piece)
         adjustPiece piece
         requested <- asks peerRequested >>= readTVarIO
-        logPeer Noisy ["piece-acquired" .= piece, "piece-requested" .= requested]
+        logPeer Noisy
+                ["piece-acquired" .= piece, "piece-requested" .= requested]
     PieceHadBadHash piece -> adjustPiece piece
   where
     adjustPiece piece = do
@@ -569,7 +570,7 @@ reactToWriter msg = case msg of
         atomically $ do
             requested <- readTVar peerRequested
             when (requested == Just piece) $ do
-                writeTVar peerRequested Nothing
+                writeTVar peerRequested  Nothing
                 writeTVar peerBlockQueue Set.empty
         adjustRequested
 
