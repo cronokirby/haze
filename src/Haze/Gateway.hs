@@ -44,6 +44,7 @@ import           Control.Logger                 ( HasLogger(..)
                                                 , (.=)
                                                 , log
                                                 )
+import           Haze.Config                    ( Port(..) )
 import           Haze.Peer                      ( makePeerInfo
                                                 , runPeerM
                                                 , startPeer
@@ -132,6 +133,8 @@ data GatewayInfo = GatewayInfo
     , gatewayLogger :: !LoggerHandle
     -- | The number of connections we currently have
     , gatewayConnections :: !(TVar Int)
+    -- | The port to listen on
+    , gatewayPort :: !Port
     }
 
 -- | Construct gateway information
@@ -141,8 +144,10 @@ makeGatewayInfo
     -> TBQueue AnnounceInfo
     -> MetaInfo
     -> LoggerHandle
+    -> Port
     -> m GatewayInfo
-makeGatewayInfo info q meta lh = GatewayInfo info q meta lh <$> newTVarIO 0
+makeGatewayInfo info q meta lh port =
+  GatewayInfo info q meta lh <$> newTVarIO 0 <*> pure port
 
 -- | A computation with access to gateway information
 newtype GatewayM a = GatewayM (ReaderT GatewayInfo IO a)
@@ -219,10 +224,10 @@ doHandshake peer client sock = void . runMaybeT $ do
 
 -- | Start the loop that listens for new passive connections
 listenLoop :: GatewayM ()
-listenLoop = TCP.listen TCP.HostAny "6881" $ \(mySock, _) -> do
-    logGateway Info ["gateway-listening" .= (6881 :: Int)]
-    allInfo <- ask
-    liftIO $ go allInfo mySock
+listenLoop = ask >>= \allInfo@GatewayInfo{gatewayPort = Port port} ->
+    TCP.listen TCP.HostAny (show port) $ \(mySock, _) -> do
+      logGateway Info ["gateway-listening" .= port]
+      liftIO $ go allInfo mySock
   where
     go :: GatewayInfo -> TCP.Socket -> IO ()
     go allInfo mySock = do

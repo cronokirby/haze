@@ -93,6 +93,7 @@ import           Haze.Bits                      ( Bits
                                                 , packBytes
                                                 , parseInt
                                                 )
+import           Haze.Config                    ( Port(..) )
 
 
 {- | Represents the URL for a torrent Tracker
@@ -346,11 +347,11 @@ data TrackerRequest = TrackerRequest
     deriving (Show)
 
 -- | Constructs the tracker request to be used at the start of a session
-newTrackerRequest :: MetaInfo -> ByteString -> TrackerRequest
-newTrackerRequest meta@MetaInfo {..} peerID = TrackerRequest
+newTrackerRequest :: Port -> MetaInfo -> ByteString -> TrackerRequest
+newTrackerRequest (Port port) meta@MetaInfo {..} peerID = TrackerRequest
     metaInfoHash
     peerID
-    6881
+    (fromIntegral port)
     (firstTrackStatus meta)
     True
     ReqStarted
@@ -407,9 +408,9 @@ data UDPTrackerRequest =
     UDPTrackerRequest ByteString TrackerRequest
 
 -- | Construct a new UDP request.
-newUDPRequest :: MetaInfo -> ByteString -> UDPConnection -> UDPTrackerRequest
-newUDPRequest meta peerID (UDPConnection trans conn) =
-    let trackerReq = newTrackerRequest meta peerID
+newUDPRequest :: Port -> MetaInfo -> ByteString -> UDPConnection -> UDPTrackerRequest
+newUDPRequest port meta peerID (UDPConnection trans conn) =
+    let trackerReq = newTrackerRequest port meta peerID
         withTrans  = trackerReq { treqTransactionID = Just trans }
     in  UDPTrackerRequest conn withTrans
 
@@ -453,7 +454,7 @@ encodeUDPRequest (UDPTrackerRequest conn TrackerRequest {..}) =
     pack32 :: (Bits i, Integral i) => i -> ByteString
     pack32 = BS.pack . encodeIntegralN 4
     packPort :: PortNumber -> ByteString
-    packPort p = BS.drop 2 (pack32 ((fromIntegral p) :: Int))
+    packPort p = BS.drop 2 (pack32 (fromIntegral p :: Int))
     eventNum :: Int32
     eventNum = case treqEvent of
         ReqEmpty     -> 0
