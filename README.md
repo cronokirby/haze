@@ -15,7 +15,7 @@ the completeness of something like `libtorrent` or `transmission` is out of the 
 
 ```
 Usage: haze TORRENT_FILE [-o|--output-dir DIRECTORY] [-l|--log-file LOG_FILE]
-            [-v|--version]
+            [-p|--port PORT] [-v|--version]
   Download the torrent in TORRENT_FILE
 
 Available options:
@@ -23,6 +23,7 @@ Available options:
   -o,--output-dir DIRECTORY
                            The directory to download the torrent to
   -l,--log-file LOG_FILE   Logging will happen to this file if set
+  -p,--port PORT           The port to listen for incoming connections on
   -h,--help                Show this help text
   -v,--version             Display what version the program is using
 ```
