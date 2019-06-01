@@ -93,7 +93,7 @@ configParser root =
 
 version :: Parser (a -> a)
 version = infoOption
-    "Haze version 0.1.0"
+    "Haze version 0.1.1"
     (long "version" <> short 'v' <> help
         "Display what version the program is using"
     )

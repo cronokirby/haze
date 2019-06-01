@@ -191,25 +191,34 @@ data ScoutResult
 launchAnnouncer :: AnnouncerM ()
 launchAnnouncer = do
     AnnouncerInfo {..} <- ask
-    let peerID = announcerPeerID
-        connInfo =
-            ConnInfo peerID announcerTorrent announcerMsg announcerStatus announcerPort
+    let peerID   = announcerPeerID
+        connInfo = ConnInfo peerID
+                            announcerTorrent
+                            announcerMsg
+                            announcerStatus
+                            announcerPort
     scoutTrackers connInfo
   where
-    scoutTrackers connInfo = forever $ do
+    scoutTrackers connInfo = do
         next <- popTracker
         ($ next) . maybe noTrackers $ \tracker -> do
             r <- tryTracker connInfo tracker
             case r of
-                ScoutTimedOut -> logAnnouncer
-                    Debug
-                    [ "tracker" .= tracker
-                    , "msg" .= ("No response after 1s" :: String)
-                    ]
-                ScoutReturned       res -> whenM (handleAnnounceRes res) settle
-                ScoutUnknownTracker t   -> logAnnouncer
-                    Debug
-                    ["tracker" .= tracker, "unkown-protocol" .= t]
+                ScoutTimedOut -> do
+                    logAnnouncer
+                        Debug
+                        [ "tracker" .= tracker
+                        , "msg" .= ("No response after 1s" :: String)
+                        ]
+                    scoutTrackers connInfo
+                ScoutReturned res -> do 
+                    whenM (handleAnnounceRes res) settle
+                    scoutTrackers connInfo
+                ScoutUnknownTracker t -> do
+                    logAnnouncer
+                        Debug
+                        ["tracker" .= tracker, "unkown-protocol" .= t]
+                    scoutTrackers connInfo
     handleAnnounceRes :: AnnounceResult -> AnnouncerM Bool
     handleAnnounceRes res = case res of
         BadAnnounce err -> do
@@ -294,7 +303,9 @@ connectHTTP url = do
     ConnInfo {..} <- ask
     mgr           <- liftIO $ newManager defaultManagerSettings
     request       <- liftIO $ parseRequest (toString url)
-    loop mgr request (newTrackerRequest connPort connTorrent (peerIDBytes connPeerID))
+    loop mgr
+         request
+         (newTrackerRequest connPort connTorrent (peerIDBytes connPeerID))
   where
     loop mgr req trackerReq = do
         let query     = trackerQuery trackerReq
@@ -354,7 +365,8 @@ connectUDP url' prt' =
     makeUDPRequest :: UDPConnection -> ConnM UDPTrackerRequest
     makeUDPRequest conn = do
         ConnInfo {..} <- ask
-        return (newUDPRequest connPort connTorrent (peerIDBytes connPeerID) conn)
+        return
+            (newUDPRequest connPort connTorrent (peerIDBytes connPeerID) conn)
     getAnnounce :: UDPSocket -> UDPTrackerRequest -> ConnM AnnounceInfo
     getAnnounce udp request = do
         sendUDP udp (encodeUDPRequest request)
