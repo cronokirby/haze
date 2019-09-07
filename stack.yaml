@@ -1,8 +1,5 @@
-<<<<<<< HEAD
-resolver: lts-14.4
-=======
-resolver: lts-13.21
->>>>>>> ad0c43881827c6391aca355ad56b5b54d4d9b800
+resolver: 
+  lts-14.4
 
 extra-deps: 
   - unagi-chan-0.4.1.0
