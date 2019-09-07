@@ -9,8 +9,8 @@ import           Relude
 import           Haze.Client                    ( launchClient )
 import           Haze.Config                    ( parseConfig )
 
-test :: Int
-test = 3
+_test :: Int
+_test = 3
 
 runHaze :: IO ()
 runHaze = parseConfig >>= launchClient
