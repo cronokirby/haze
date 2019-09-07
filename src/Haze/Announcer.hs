@@ -13,6 +13,7 @@ module Haze.Announcer
     , makeAnnouncerInfo
     , runAnnouncerM
     , launchAnnouncer
+
     )
 where
 
