@@ -7,6 +7,7 @@ as well as utilities for parsing that config from the command line.
 -}
 module Haze.Config
     ( Config(..)
+    , Port(..)
     , parseConfig
     )
 where
@@ -36,9 +37,12 @@ data Config = Config
     at all.
     -}
     , configLogFile :: !(Maybe (Path Abs File))
+    -- | The port to listen or incoming connections on.
+    , configPort :: !Port
     }
     deriving (Show)
 
+newtype Port = Port Int deriving (Show, Read)
 
 -- | Read an absolute directory given a root for relative directories
 rootedDir :: Path Abs Dir -> ReadM (Path Abs Dir)
@@ -77,10 +81,19 @@ configParser root =
                 <> help "Logging will happen to this file if set"
                 <> value Nothing
                 )
+        <*> (Port <$>
+              option
+                auto
+                (  metavar "PORT"
+                <> long "port"
+                <> short 'p'
+                <> help "The port to listen for incoming connections on"
+                <> value 6881
+                ))
 
 version :: Parser (a -> a)
 version = infoOption
-    "Haze version 0.1.0"
+    "Haze version 0.1.1"
     (long "version" <> short 'v' <> help
         "Display what version the program is using"
     )

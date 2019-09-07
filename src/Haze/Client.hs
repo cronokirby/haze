@@ -38,7 +38,9 @@ import           Haze.Announcer                 ( makeAnnouncerInfo
                                                 , launchAnnouncer
                                                 )
 import           Haze.Bencoding                 ( DecodeError(..) )
-import           Haze.Config                    ( Config(..) )
+import           Haze.Config                    ( Config(..)
+                                                , Port(..)
+                                                )
 import           Haze.Gateway                   ( makeGatewayInfo
                                                 , runGatewayM
                                                 , gatewayLoop
@@ -74,12 +76,14 @@ data ClientInfo = ClientInfo
     , clientAnnouncerResults :: !(TBQueue AnnounceInfo)
     -- | The logging handle
     , clientLogger :: !LoggerHandle
+    -- | The port to listen on
+    , clientPort :: !Port
     }
 
 -- | Make client information given a torrent file
 makeClientInfo
-    :: MonadIO m => MetaInfo -> Path Abs Dir -> LoggerHandle -> m ClientInfo
-makeClientInfo clientMeta clientRoot clientLogger = do
+    :: MonadIO m => MetaInfo -> Path Abs Dir -> LoggerHandle -> Port -> m ClientInfo
+makeClientInfo clientMeta clientRoot clientLogger clientPort = do
     clientPeerInfo         <- makeEmptyPeerInfo clientMeta
     clientAnnouncerResults <- liftIO $ newTBQueueIO 16
     return ClientInfo { .. }
@@ -107,7 +111,7 @@ launchClient Config {..} = do
             let loggerConfig =
                     defaultLoggerConfig { loggerFile = configLogFile }
             (pid, logger) <- startLogger loggerConfig
-            clientInfo    <- makeClientInfo meta configDownloadDir logger
+            clientInfo <- makeClientInfo meta configDownloadDir logger configPort
             runClientM startClient clientInfo `finally` cancel pid
 
 startClient :: ClientM ()
@@ -136,7 +140,8 @@ startAll = sequence
         status <- asks (infoStatus . clientPeerInfo)
         q      <- asks clientAnnouncerResults
         logH   <- asks clientLogger
-        info   <- makeAnnouncerInfo meta peerID status q logH
+        port   <- asks clientPort
+        info   <- makeAnnouncerInfo meta peerID status q logH port
         asyncio $ runAnnouncerM launchAnnouncer info
     startPieceWriter :: ClientM (Async ())
     startPieceWriter = do
@@ -159,7 +164,8 @@ startAll = sequence
         announces <- asks clientAnnouncerResults
         meta      <- asks clientMeta
         logger    <- asks clientLogger
-        gateInfo  <- makeGatewayInfo peerInfo announces meta logger
+        port      <- asks clientPort
+        gateInfo  <- makeGatewayInfo peerInfo announces meta logger port
         asyncio $ runGatewayM gatewayLoop gateInfo
     startPrinter :: ClientM (Async ())
     startPrinter = do
